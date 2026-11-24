@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  const $=s=>document.querySelector(s), R=Rocks.render, Y=Rocks.yard, M=Rocks.models;
+  const $=s=>document.querySelector(s), R=Rocks.render, Y=Rocks.yard, M=Rocks.models, B=Rocks.backyard;
   const {TOTAL,pile,truck,shed,delivery,chair,cells}=Y, {tools}=M;
   const {clamp,mix,TAU,worldPose}=R;
   const canvas=R.canvas;
@@ -11,7 +11,7 @@
   }
   const SAVE='the-rocks-v01', pad={x:truck.x,z:truck.z+2.75};
   const spawn={x:-.65,z:5.6,yaw:-.39,pitch:-.02};
-  const fresh=()=>({version:3,credits:0,removed:0,bag:0,tier:0,owned:[0],hits:{},rubble:{},depleted:Y.spread(0),vehicle:null});
+  const fresh=()=>({version:4,...B.fresh(),credits:0,removed:0,bag:0,tier:0,owned:[0],hits:{},rubble:{},depleted:Y.spread(0),vehicle:null});
   const num=n=>n.toLocaleString('en-US');
   const int=(n,max=TOTAL)=>Number.isFinite(n)?clamp(Math.trunc(n),0,max):0;
   const finite=(n,fallback)=>Number.isFinite(n)?n:fallback;
@@ -22,8 +22,8 @@
     s.credits=int(raw.credits,s.removed);
     s.owned=[...new Set([0,...raw.owned.filter(i=>Number.isInteger(i)&&i>0&&i<tools.length)])].sort((a,b)=>a-b);
     s.tier=s.owned.includes(raw.tier)?raw.tier:0;
+    B.restore(s,raw);
     const t=tools[s.tier];
-    s.bag=int(raw.bag,Math.min(TOTAL-s.removed,t.cap));
     for(const [key,n] of Object.entries(raw.hits||{})){
       let id=key;
       if(key.startsWith('v2:')){
@@ -34,7 +34,7 @@
       if(!match||+match[1]>=38)continue;
       s.hits[id]=int(n,+match[1]<26?2:4);
     }
-    let pending=TOTAL-s.removed-s.bag;
+    let pending=TOTAL-s.removed-s.bag-s.buffer;
     for(const [id,n] of Object.entries(raw.rubble||{})){
       if(!Object.prototype.hasOwnProperty.call(s.hits,id))continue;
       const amount=int(n,Math.min(1800,pending));
@@ -76,15 +76,22 @@
   let look=null, workPointer=null, started=false, shopOpen=false;
   let clock=0,lastFrame=0,lastDraw=-1,toastUntil=0,dialogueUntil=0,lastSave=0;
   let action=null,walk=0,wheel=0,speed=0,steering=0,blade=false,viewHeight=0;
-  let hint='',actionText='',mountText='';
+  let hint='',actionText='',mountText='',shopTab='tools';
   const current=()=>tools[state.tier];
+  const capacity=()=>B.capacity(state);
+  const carrier=()=>B.carriers[state.carry];
   const mounted=()=>state.vehicle?.mounted===true;
   const close=(a,b,dist)=>Math.hypot(a.x-b.x,a.z-b.z)<dist;
   const facing=yaw=>[Math.sin(yaw),-Math.cos(yaw)];
   const nearShed=()=>!mounted()&&Math.abs(player.x-shed.x)<2.52&&player.z>shed.z-3.30&&player.z<shed.z+1.15;
   const nearTruck=()=>close(player,pad,mounted()?3.05:2.23);
   const nearVehicle=()=>state.vehicle&&close(player,state.vehicle,current().width*.65+1.34);
-  const yardLeft=()=>TOTAL-state.removed-state.bag;
+  const nearHopper=()=>state.factory>0&&close(player,B.hopper,mounted()?2.82:1.78);
+  const yardLeft=()=>TOTAL-state.removed-state.bag-state.buffer;
+  const phone=Rocks.phone({
+    getState:()=>state,save,hired:hireBuddy,
+    interrupt(){clearMovement();speed=0;}
+  });
   function save(){
     try{localStorage.setItem(SAVE,JSON.stringify(state));}catch{}
     lastSave=clock;
@@ -99,20 +106,45 @@
     $('#remaining').textContent=num(yardLeft());
     $('#credits').textContent=num(state.credits);
     $('#toolName').textContent=t.n;
-    $('#bag').textContent=`${num(state.bag)} / ${num(t.cap)}`;
-    $('#bagLabel').textContent=state.bag>=t.cap?'FULL · unload':t.mode==='dozer'?'ahead of blade':t.eye?'machine load':'carried';
+    $('#bag').textContent=`${num(state.bag)} / ${num(capacity())}`;
+    $('#bagLabel').textContent=state.bag>=capacity()?'FULL · unload':t.mode==='dozer'?'ahead of blade':t.eye?'machine load':carrier().name;
     $('#bar i').style.width=`${state.removed/TOTAL*100}%`;
     if(shopOpen)drawShop();
   }
+  function shopRow(name, detail, description, label, index, disabled, buy){
+    return `<div class="item"><div><b>${name}</b><small>${detail}</small><small>${description}</small></div><button type="button" data-tier="${index}" class="${buy&&!disabled?'buy':''}" ${disabled?'disabled':''}>${label}</button></div>`;
+  }
   function drawShop(){
     $('#shopBalance').textContent=num(state.credits)+' rock credits';
-    $('#items').innerHTML=tools.map((t,i)=>{
-      const own=state.owned.includes(i), selected=state.tier===i;
-      const blocked=selected||(!own&&(state.credits<t.cost||!state.owned.includes(i-1)));
-      const rate=t.mode==='dozer'?num(Math.round(t.hit/t.cycle))+'/sec at full push':t.hold?num(Math.round(t.hit/t.cycle))+'/sec':num(t.hit)+'/load';
-      return `<div class="item"><div><b>${t.n}</b><small>${num(t.cap)} capacity · ${rate}</small><small>${t.desc}</small></div><button type="button" data-tier="${i}" class="${!own&&!blocked?'buy':''}" ${blocked?'disabled':''}>${selected?'Equipped':own?'Equip':num(t.cost)+' rocks'}</button></div>`;
-    }).join('');
-    $('#items').scrollTop=Math.min($('#items').scrollHeight,$('#items').scrollTop);
+    for(const button of $('#shopTabs').querySelectorAll?.('button')||[]){
+      button.setAttribute('aria-pressed',String(button.dataset.shop===shopTab));
+    }
+    let rows;
+    if(shopTab==='carry') {
+      rows=B.carriers.map((c,i)=>{
+        const own=state.carryOwned.includes(i), selected=state.carry===i;
+        const disabled=selected||(!own&&(state.credits<c.cost||!state.carryOwned.includes(i-1)));
+        return shopRow(c.name,num(c.cap)+' carry',c.detail,selected?'Equipped':own?'Equip':num(c.cost)+' rocks',i,disabled,!own);
+      });
+    }else if(shopTab==='training'){
+      rows=B.training.map((u,i)=>{
+        const level=state.training[i], cost=u.costs[level];
+        const detail=i===1?`Level ${level} · larger grabs and scoops`:`Level ${level} · +${level*(i===0?19:15)}% speed`;
+        return shopRow(u.name,detail,u.detail,cost?num(cost)+' rocks':'Maxed',i,!cost||state.credits<cost,true);
+      });
+    }else if(shopTab==='factory'){
+      rows=B.factory.map((f,i)=>shopRow(f.name,'Outdoor equipment',f.detail,state.factory>i?'Installed':num(f.cost)+' rocks',i,
+        state.factory!==i||state.credits<f.cost,true));
+    }else{
+      rows=B.toolIds.map(i=>{
+        const t=tools[i], own=state.owned.includes(i), selected=state.tier===i;
+        const disabled=selected||(!own&&(state.credits<t.cost||!state.owned.includes(B.prevTool(i))));
+        const count=B.rate(state,t), rate=t.hold||t.mode==='dozer'?num(Math.round(count/t.cycle))+'/sec':num(count)+'/action';
+        const detail=t.eye?num(t.cap)+' capacity · '+rate:rate+' · carry sold separately';
+        return shopRow(t.n,detail,t.desc,selected?'Equipped':own?'Equip':num(t.cost)+' rocks',i,disabled,!own);
+      });
+    }
+    $('#items').innerHTML=rows.join('');
   }
   function clearMovement(){
     heldKeys.clear();
@@ -121,7 +153,7 @@
     $('#knob').style.transform='';
   }
   function openShop(open){
-    if(open&&(!started||!nearShed())){
+    if(open&&(!started||phone.visible()||!nearShed())){
       if(started)say(mounted()?'Exit the machine before visiting the shed.':'Visit the shed in the far right corner.');
       return;
     }
@@ -137,13 +169,13 @@
   }
   function equip(i){
     const t=tools[i], own=state.owned.includes(i);
-    if(!t||state.tier===i||!shopOpen||!nearShed()||action)return;
-    if(state.bag&&(state.bag>t.cap||current().eye||t.eye)){
+    if(!t||!B.toolIds.includes(i)||state.tier===i||!shopOpen||!nearShed()||action)return;
+    if(state.bag&&(current().eye||t.eye)){
       say('Unload the current equipment before switching.');
       return;
     }
     if(!own){
-      if(state.credits<t.cost||!state.owned.includes(i-1))return;
+      if(state.credits<t.cost||!state.owned.includes(B.prevTool(i)))return;
       state.credits-=t.cost;
       state.owned.push(i);
     }
@@ -153,6 +185,40 @@
     openShop(false);
     updateUI();save();
     say(t.eye?t.n+' delivered on the pad outside.':'Picked up '+t.n+' from the shed.');
+  }
+  function buyShop(i){
+    if(shopTab==='tools'){equip(i);return;}
+    if(!shopOpen||!nearShed()||action)return;
+    if(shopTab==='carry'){
+      const c=B.carriers[i], own=state.carryOwned.includes(i);
+      if(!c||state.carry===i)return;
+      if(!current().eye&&state.bag>c.cap){say('Unload before switching to a smaller carrier.');return;}
+      if(!own){
+        if(state.credits<c.cost||!state.carryOwned.includes(i-1))return;
+        state.credits-=c.cost;state.carryOwned.push(i);
+      }
+      state.carry=i;openShop(false);
+      say(c.name+' equipped.');
+    }else if(shopTab==='training'){
+      const cost=B.training[i]?.costs[state.training[i]];
+      if(!cost||state.credits<cost)return;
+      state.credits-=cost;state.training[i]++;
+    }else if(shopTab==='factory'){
+      const f=B.factory[i];
+      if(!f||state.factory!==i||state.credits<f.cost)return;
+      state.credits-=f.cost;state.factory++;
+      openShop(false);say(f.name+' installed on the far side of the yard.');
+    }
+    updateUI();save();
+  }
+  function hireBuddy(i){
+    const buddy=B.buddies[i];
+    if(!buddy||i!==state.buddies.length||state.credits<buddy.cost)return false;
+    state.credits-=buddy.cost;
+    state.buddies.push(0);
+    B.record(state.phone,'log',buddy.name+' is on the way.');
+    save();updateUI();
+    return true;
   }
   function worldBlock(x,z,vehicle=false){
     const radius=vehicle?current().width*.46:.24;
@@ -169,7 +235,7 @@
   }
   function mount(){
     const v=state.vehicle;
-    if(!started||shopOpen||!v||action)return;
+    if(!started||shopOpen||phone.visible()||!v||action)return;
     if(v.mounted){
       const t=current(), lateral=[Math.cos(v.yaw),Math.sin(v.yaw)], front=facing(v.yaw);
       const clear=[[0,1],[0,-1],[-1,0],[1,0]].find(([f,l])=>
@@ -230,12 +296,12 @@
     }
     speed=steering=0;
     if(magnitude>.045){
-      const barrow=t.mode==='barrow', factor=barrow?(state.bag>=t.cap?.89:.97):1;
-      const distance=dt*4.65*factor;
+      const rig=!t.eye&&carrier().rig, factor=rig?(state.bag>=capacity()?.87:.96):1;
+      const distance=dt*4.65*factor*(1+state.training[2]*.15);
       const dx=sx*Math.cos(player.yaw)-sy*Math.sin(player.yaw),dz=sx*Math.sin(player.yaw)+sy*Math.cos(player.yaw);
       const nx=player.x+dx*distance,nz=player.z+dz*distance;
       const oldX=player.x,oldZ=player.z;
-      const clearance=(x,z)=>!barrow||!worldBlock(x+Math.sin(player.yaw)*.64,z-Math.cos(player.yaw)*.64);
+      const clearance=(x,z)=>!rig||!worldBlock(x+Math.sin(player.yaw)*.64,z-Math.cos(player.yaw)*.64);
       if(!worldBlock(nx,player.z)&&clearance(nx,player.z))player.x=nx;
       if(!worldBlock(player.x,nz)&&clearance(player.x,nz))player.z=nz;
       const moved=Math.hypot(player.x-oldX,player.z-oldZ);
@@ -298,33 +364,35 @@
   }
   function startWork(target){
     const t=current();
-    action={kind:'work',start:clock,at:t.impact,end:t.cycle,target,done:false};
+    const pace=B.speed(state,t);
+    action={kind:'work',start:clock,at:t.impact/pace,end:t.cycle/pace,target,done:false};
   }
   function requestAction(){
-    if(!started||shopOpen||action)return;
+    if(!started||shopOpen||phone.visible()||action)return;
     const t=current();
     if(t.eye&&!mounted()){
       if(nearShed())openShop(true);
       else mount();
       return;
     }
-    if(nearTruck()&&state.bag){
-      const cycle=t.eye?.88:t.mode==='barrow'?.60:.39;
-      action={kind:'dump',start:clock,end:cycle,at:cycle*.59,done:false};
+    if(state.bag&&(nearTruck()||nearHopper())){
+      if(!nearTruck()&&state.buffer>=B.BUFFER_MAX){say('The hopper is full. Give the belt a moment.');return;}
+      const cycle=t.eye?.88:carrier().rig?.60:.39;
+      action={kind:'dump',start:clock,end:cycle,at:cycle*.59,done:false,toBelt:!nearTruck()};
       return;
     }
     if(nearShed()){openShop(true);return;}
-    if(!yardLeft()){say(state.bag?'Bring the last load to the truck.':'Done. Larry thinks you missed one.');return;}
+    if(!yardLeft()){say(state.bag?'Bring the last load to the truck.':state.buffer?'The last rocks are on the conveyor.':'Done. Larry thinks you missed one.');return;}
     if(t.mode==='dozer'){
       blade=!blade;
       say(blade?'Blade down. Drive forward into the gravel.':'Blade raised.');
       return;
     }
-    if(state.bag>=t.cap){say('Full. Bring the load to the truck.');return;}
+    if(state.bag>=capacity()){say('Full. Bring the load to the truck.');return;}
     const target=mounted()?machineTarget():handTarget();
     if(!target){say(t.eye?'Bring the front of the machine to the gravel.':'Move closer to the rock mountain.');return;}
     if(target.rock&&!state.rubble[target.rock.id]&&(!t.power||target.rock.type===2&&!t.boulder)){
-      if(t.mode==='cart'||t.mode==='vac'||t.mode==='barrow'){
+      if(t.mode==='cart'||t.mode==='vac'){
         startWork({...target,rock:null});
         return;
       }
@@ -336,11 +404,11 @@
   function performWork(target){
     const t=current(), {x,z,rock}=target;
     if(mounted()?Math.hypot(x-player.x,z-player.z)>t.reach+1.62:Math.hypot(x-player.x,z-player.z)>3.24)return;
-    const space=t.cap-state.bag;
+    const space=capacity()-state.bag;
     if(!space)return;
     let n=0;
     if(rock&&state.rubble[rock.id]){
-      n=Math.min(space,state.rubble[rock.id]);
+      n=Math.min(space,B.rate(state,t),state.rubble[rock.id]);
       state.rubble[rock.id]-=n;
       if(!state.rubble[rock.id])delete state.rubble[rock.id];
       surface.changed();
@@ -363,45 +431,99 @@
           save();
           return;
         }
-        n=Math.min(space,loose);
+        n=Math.min(space,B.rate(state,t),loose);
         if(n===loose)delete state.rubble[rock.id];
         else state.rubble[rock.id]-=n;
       }
     }
     // Heavy equipment sweeps the surrounding gravel even when it catches a boulder.
-    if(!n||t.eye)n+=surface.excavate(x,z,Math.min(space-n,t.hit),t.eye?(t.mode==='dozer'?1.65:t.mode==='excavator'?1.22:.90):.70);
+    if(!n||t.eye)n+=surface.excavate(x,z,Math.min(space-n,B.rate(state,t)),t.eye?(t.mode==='dozer'?1.65:t.mode==='excavator'?1.22:.90):.70);
     if(!n){if(!t.hold&&t.mode!=='dozer')say('That patch is clear. Move along the pile.');return;}
     state.bag+=n;
     const direction=facing(mounted()?state.vehicle.yaw:player.yaw).map(v=>v*(t.mode==='dozer'?1:-1));
     surface.puff(x,z,n,direction);
-    if(state.bag>=t.cap)say('Full. Take the load to the truck.');
+    if(state.bag>=capacity())say('Full. Take the load to the truck.');
     else if(!t.hold&&t.mode!=='dozer')say('+'+num(n)+(n===1?' rock':' rocks'));
     updateUI();save();
   }
-  function finishDump(){
-    if(!nearTruck()||!state.bag)return;
-    const n=state.bag, before=state.removed;
-    state.bag=0;
+  function deposit(n){
+    const before=state.removed;
     state.credits+=n;
     state.removed+=n;
     if((before<70&&state.removed>=70)||(before<220&&state.removed>=220))surface.changed();
+  }
+  function finishDump(toBelt){
+    if(!state.bag)return;
+    if(toBelt?!nearHopper():!nearTruck())return;
+    const n=toBelt?Math.min(state.bag,B.BUFFER_MAX-state.buffer):state.bag;
+    if(!n)return;
+    state.bag-=n;
+    if(toBelt){
+      state.buffer+=n;state.factoryTick=Math.min(state.factoryTick,1);
+    }else deposit(n);
     if(current().mode==='dozer')blade=false;
-    surface.puff(pad.x,pad.z,Math.min(n,32));
-    say(state.removed===TOTAL?'Done. Larry thinks you missed one.':'+'+num(n)+' rock credits');
+    const destination=toBelt?B.hopper:pad;
+    surface.puff(destination.x,destination.z,Math.min(n,32));
+    say(state.removed===TOTAL?'Done. Larry thinks you missed one.':
+      toBelt?num(n)+' rocks on the conveyor':'+'+num(n)+' rock credits');
     updateUI();save();
+  }
+  function autoHarvest(x,z,amount,reach,crush){
+    let remaining=Math.min(amount,yardLeft()), collected=0;
+    if(remaining<=0)return 0;
+    if(crush){
+      const rock=surface.geology.find(r=>state.rubble[r.id]&&Math.hypot(r.x-x,r.z-z)<=reach);
+      if(rock){
+        const n=Math.min(remaining,state.rubble[rock.id]);
+        remaining-=n;collected+=n;state.rubble[rock.id]-=n;
+        if(!state.rubble[rock.id])delete state.rubble[rock.id];
+        surface.changed();
+      }
+    }
+    const target=surface.nearest(x,z,reach);
+    if(!target||!remaining)return collected;
+    const n=surface.excavate(target.x,target.z,remaining,reach>6?1.60:.9);
+    if(n&&state.factory>1)surface.puff(target.x,target.z,n,[1,0]);
+    return collected+n;
+  }
+  function workYard(dt){
+    let changed=false;
+    for(let i=0;i<state.buddies.length;i++){
+      const buddy=B.buddies[i];
+      state.buddies[i]+=dt;
+      if(state.buddies[i]<buddy.time)continue;
+      state.buddies[i]-=buddy.time;
+      const n=autoHarvest(2.1,1.08,buddy.load,Infinity,true);
+      if(n){deposit(n);changed=true;}
+    }
+    if(state.factory){
+      state.factoryTick+=dt;
+      if(state.factoryTick>=4){
+        state.factoryTick-=4;
+        const boosted=state.factory===3;
+        const output=Math.min(state.buffer,boosted?3_600_000:1_200_000);
+        if(output){state.buffer-=output;deposit(output);changed=true;}
+        if(state.factory>=2){
+          const n=autoHarvest(B.intake.x,B.intake.z,Math.min(B.BUFFER_MAX-state.buffer,boosted?3_300_000:700_000),11,boosted);
+          state.buffer+=n;
+          changed||=n>0;
+        }
+      }
+    }
+    if(changed){updateUI();save();}
   }
   function actions(){
     if(action){
       const age=clock-action.start;
       if(!action.done&&age>=action.at){
         action.done=true;
-        if(action.kind==='dump')finishDump();
+        if(action.kind==='dump')finishDump(action.toBelt);
         else performWork(action.target);
       }
       if(age>=action.end)action=null;
     }
-    if(!action&&current().hold&&(workPointer!==null||heldKeys.has('e')||heldKeys.has(' '))&&!(nearTruck()&&state.bag)){
-      if((!current().eye&&state.bag<current().cap&&handTarget())||(mounted()&&state.bag<current().cap&&machineTarget()))requestAction();
+    if(!action&&!phone.visible()&&current().hold&&(workPointer!==null||heldKeys.has('e')||heldKeys.has(' '))&&!((nearTruck()||nearHopper())&&state.bag)){
+      if((!current().eye&&state.bag<capacity()&&handTarget())||(mounted()&&state.bag<capacity()&&machineTarget()))requestAction();
     }
   }
 
@@ -483,11 +605,13 @@
   function context(){
     const t=current(), riding=mounted(), vehicle=t.eye;
     let h,a,b='';
-    if(!yardLeft()&&!state.bag){h='The yard is clear.';a='DONE';}
+    if(!yardLeft()&&!state.bag&&!state.buffer){h='The yard is clear.';a='DONE';}
+    else if(!yardLeft()&&!state.bag&&state.buffer){h='Last load is on the conveyor';a='WAIT';}
     else if(nearTruck()&&state.bag&&(!vehicle||riding)){h='Unload into the truck';a='UNLOAD';}
+    else if(nearHopper()&&state.bag&&(!vehicle||riding)){h='Feed the conveyor hopper';a='FEED';}
     else if(nearShed()){h='Tool shed · buy or swap equipment';a='TOOLS';}
     else if(vehicle&&!riding){h=nearVehicle()?'Enter '+t.n:'Find your machine on the delivery pad or where you parked it';a='ENTER';}
-    else if(state.bag>=t.cap){h='Load full · head to the truck';a=t.mode==='dozer'?(blade?'RAISE':'LOWER BLADE'):'FULL';}
+    else if(state.bag>=capacity()){h='Load full · head to the truck';a=t.mode==='dozer'?(blade?'RAISE':'LOWER BLADE'):'FULL';}
     else if(riding){
       if(t.mode==='dozer'){
         h=blade?(machineTarget()?'Drive forward into the rocks':lastRocksHint()||'Drive forward into the rocks'):'Lower the blade to push gravel';
@@ -519,7 +643,12 @@
 
   $('#shopBtn').onclick=()=>openShop(true);
   $('#close').onclick=()=>openShop(false);
-  $('#items').onclick=e=>{const button=e.target.closest('button[data-tier]');if(button)equip(+button.dataset.tier);};
+  $('#items').onclick=e=>{const button=e.target.closest('button[data-tier]');if(button)buyShop(+button.dataset.tier);};
+  $('#shopTabs').onclick=e=>{
+    const button=e.target.closest('button[data-shop]');
+    if(!button)return;
+    shopTab=button.dataset.shop;$('#items').scrollTop=0;drawShop();
+  };
   $('#mount').onclick=mount;
   $('#act').onclick=e=>{
     if(!current().hold||e.detail===0)requestAction();
@@ -534,12 +663,13 @@
     $('#act').addEventListener(event,e=>{if(e.pointerId===workPointer)workPointer=null;});
   }
   $('#start').onclick=()=>{
-    started=true;$('#intro').style.display='none';
+    started=true;$('#intro').style.display='none';phone.arm();
+    if(state.phone.ring)phone.open();
     if(state.vehicle&&!mounted())say('Your machine is where you parked it or on the delivery pad.');
   };
   $('#reset').onclick=()=>{
     if(!confirm('Start over? All progress will be lost.'))return;
-    state=fresh();player={...spawn};
+    state=fresh();player={...spawn};shopTab='tools';phone.refresh();
     speed=wheel=walk=0;blade=false;action=null;
     Object.assign(larry,{x:points.patio.x,z:points.patio.z,yaw:points.patio.yaw,path:null,route:0,lastLine:clock-12});
     larry.lines.clear();setLarry('stand',2.4);
@@ -554,7 +684,7 @@
     $('#knob').style.transform=`translate(${dx}px,${dy}px)`;
   }
   $('#stick').addEventListener('pointerdown',e=>{
-    if(stick.pointer!==null||!started||shopOpen)return;
+    if(stick.pointer!==null||!started||shopOpen||phone.visible())return;
     e.preventDefault();stick.pointer=e.pointerId;
     e.currentTarget.setPointerCapture(e.pointerId);
     moveStick(e);
@@ -567,7 +697,7 @@
     });
   }
   canvas.addEventListener('pointerdown',e=>{
-    if(!started||shopOpen||look)return;
+    if(!started||shopOpen||phone.visible()||look)return;
     look={id:e.pointerId,x:e.clientX,y:e.clientY};
     canvas.setPointerCapture(e.pointerId);
   });
@@ -583,7 +713,9 @@
   window.addEventListener('keydown',e=>{
     const k=e.key.toLowerCase();
     if(!started)return;
-    if(k==='escape'){openShop(false);return;}
+    if(k==='escape'){if(phone.visible())phone.close();else openShop(false);return;}
+    if(k==='p'&&!e.repeat&&!shopOpen){$('#phoneToggle').onclick();return;}
+    if(phone.visible())return;
     if(k==='b'&&!e.repeat){openShop(!shopOpen);return;}
     if(shopOpen)return;
     heldKeys.add(k);
@@ -598,7 +730,7 @@
 
   function render(dt){
     const t=current(), riding=mounted(), vehicle=state.vehicle;
-    const fill=state.bag/t.cap, time=action?.kind==='work'?clock-action.start:10;
+    const fill=state.bag/capacity(), time=action?.kind==='work'?(clock-action.start)*B.speed(state,t):10;
     const dump=action?.kind==='dump'?Math.sin(Math.PI*clamp((clock-action.start)/action.end,0,1)):0;
     const work=action?.kind==='work'?Math.sin(Math.PI*clamp(time/action.end,0,1)):0;
     const height=surface.height(player.x,player.z);
@@ -610,26 +742,34 @@
       const pose=worldPose(vehicle.x,ground,vehicle.z,vehicle.yaw);
       world.push(...M.machinery(state.tier,pose,{spin:wheel,work,dump,fill,blade,cab:!riding}));
     }
-    if(t.mode==='barrow'){
+    const rig=!t.eye&&carrier().rig;
+    if(rig){
       const [fx,fz]=facing(player.yaw);
-      const x=player.x+fx*.65,z=player.z+fz*.65;
+      const offset=rig==='bin'?1:.65;
+      const x=player.x+fx*offset,z=player.z+fz*offset;
       const pose=worldPose(x,surface.height(x,z)*.65, z,player.yaw);
-      world.push(...M.barrow(state.tier,pose,wheel,fill,dump));
+      world.push(...(rig==='bin'?M.trashBin(pose,wheel,fill,dump):M.barrow(rig,pose,wheel,fill,dump)));
     }
     if(!larry.hidden&&Rocks.larry&&close(player,larry,R.gl?24:13)){
       const clipAge=clock-larry.at;
       world.push(Rocks.larry.part(larry.clip,clipAge,worldPose(larry.x,0,larry.z,larry.yaw)));
     }
-    const view=M.viewModel(state.tier,time,walk,fill,riding,dump,steering,blade);
+    world.push(...B.factoryParts(state),...B.buddyParts(state));
+    const pushing=rig&&action?.kind!=='work';
+    const view=M.viewModel(pushing?(rig==='bin'?7:rig):state.tier,time,walk,fill,riding,dump,steering,blade);
+    if(!t.eye&&state.carry===2&&action?.kind!=='work')view.push(...M.carryBucket(fill,dump,walk));
     R.draw(world,view,camera);
+  }
+  function advanceGame(dt){
+    clock+=dt;
+    if(!phone.visible())motion(dt);
+    actions();updateLarry(dt);workYard(dt);phone.tick(dt);
+    if(clock-lastSave>=25)save();
   }
   function frame(now){
     const dt=lastFrame?Math.min(.065,(now-lastFrame)/1000):.016;
     lastFrame=now;
-    if(started&&!shopOpen){
-      clock+=dt;
-      motion(dt);actions();updateLarry(dt);
-    }
+    if(started&&!shopOpen)advanceGame(dt);
     surface.step(dt);
     if(started&&!shopOpen)context();
     if(R.gl||now-lastDraw>=45){

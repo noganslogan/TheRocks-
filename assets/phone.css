@@ -1,0 +1,36 @@
+#phoneToggle{pointer-events:auto;min-height:44px;padding:0 12px;font-size:11px;font-weight:850;letter-spacing:.08em;color:#e2e9dd}
+#phoneToggle.urgent{background:#ab6448;color:#fff1dc}
+#phoneOverlay{position:absolute;inset:0;z-index:7;display:grid;place-items:center;background:#14191488;touch-action:pan-y;padding:4px}
+#phoneShell{width:min(358px,94vw);height:min(82vh,520px);height:min(85dvh,520px);min-height:220px;display:flex;flex-direction:column;
+  background:#202321;border:5px solid #101111;border-radius:25px;box-shadow:0 0 0 1.5px #ad9e89,0 12px 40px #080b08bc;
+  overflow:hidden;color:#f2ede3;position:relative;animation:raise-phone .24s ease-out both}
+@keyframes raise-phone{from{transform:translateY(18vh) rotate(-7deg);opacity:.3}to{transform:none;opacity:1}}
+#phoneHeader{display:flex;align-items:center;gap:10px;padding:10px 11px 6px;background:linear-gradient(100deg,#40322f,#272a25);position:relative}
+#phonePortrait{width:49px;height:49px;object-fit:cover;border-radius:15px;border:1px solid #fff3;background:#8a584d}
+#phoneTitle{font-size:16px;font-weight:850;line-height:1.05;margin:0 0 3px}
+#phoneMeta{color:#cfc5b5;font-size:11px}
+#phoneClose{margin-left:auto;background:#fff1;border-color:#fff3;min-width:48px;min-height:44px;font-size:18px}
+#phoneTabs{display:flex;gap:5px;padding:3px 10px 4px;background:#2b2b26}
+#phoneTabs button{flex:1;min-height:37px;border-radius:7px;font-size:12px;color:#ddd6c7}
+#phoneTabs button[aria-pressed=true]{background:#5a4a3f;color:#fff4e2}
+#phoneThread{flex:1;min-height:0;overflow:auto;padding:9px 11px;touch-action:pan-y;overscroll-behavior:contain}
+.bubble{padding:7px 9px;border-radius:12px 12px 12px 3px;background:#343d34;margin-bottom:6px;width:fit-content;max-width:88%;font-size:13px;line-height:1.27}
+.bubble.me{margin-left:auto;background:#614c40;border-radius:12px 12px 3px 12px}
+.bubble.log{margin:6px auto;background:transparent;text-align:center;color:#bfbaa9;font-size:11px}
+.call-card{padding:10px;color:#dbd1bf;font-size:14px;text-align:center;line-height:1.4}
+#phoneOverlay.call #phoneThread{display:grid;place-items:center;background:linear-gradient(140deg,#2b2927,#252f28)}
+#phoneActions{padding:6px 7px 8px;display:flex;flex-wrap:wrap;gap:5px;justify-content:center;background:#272923}
+#phoneActions button{padding:4px 7px;min-height:40px;font-size:11px;line-height:1.15;flex:1}
+#phoneActions .answer{background:#668760;color:#fffdf4;font-weight:850}
+#phoneActions .decline{background:#9b5243;color:white;font-weight:800}
+#phoneActions .quiet{background:#393c34}
+#phoneActions .reply{background:#4b5a48}
+.contact{display:flex;justify-content:space-between;gap:8px;padding:8px 3px;border-bottom:1px solid #fff2;font-size:13px}
+.contact-name{font-weight:750}
+.contact-status{color:#c8b798;font-size:12px}
+#shopTabs{display:flex;gap:5px;padding:7px 13px 2px;flex-wrap:wrap}
+#shopTabs button{font-weight:700;font-size:12px;min-height:34px;padding:4px 10px}
+#shopTabs button[aria-pressed=true]{background:#5d7450;color:#fff3d5}
+#topRight{display:flex;flex-direction:column;align-items:flex-end;gap:5px}
+@media(max-height:390px){#phoneShell{height:88dvh}#phonePortrait{height:38px;width:38px}#phoneHeader{padding-top:5px}}
+@media(prefers-reduced-motion:reduce){#phoneShell{animation:none}}

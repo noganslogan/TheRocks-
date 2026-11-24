@@ -231,6 +231,52 @@ Rocks.models = (() => {
     if(fill>0)out.push({item:m.load,m:compose(bucket,transform(0,-.10+fill*.12,0,0,0,0,.68+fill*.32))});
     return out;
   }
+  const binBody=part(()=>{
+    const bottom=.27,top=1.12;
+    const lower=[[-.29,bottom,-.32],[.29,bottom,-.32],[.29,bottom,.40],[-.29,bottom,.40]];
+    const upper=[[-.38,top,-.41],[.38,top,-.41],[.38,top,.51],[-.38,top,.51]];
+    quad(...lower,'424d41');
+    for(let i=0;i<4;i++){
+      const j=(i+1)%4;
+      quad(lower[i],upper[i],upper[j],lower[j],i===0?'495947':'536550');
+      rod(upper[i],upper[j],.034,'374737',7);
+    }
+    for(const side of [-1,1]){
+      rod([side*.32,.38,-.305],[side*.42,1.09,-.40],.033,'677966',7);
+      rod([side*.35,1.1,-.391],[side*.32,1.194,-.61],.026,dark,7);
+    }
+    rod([-.34,1.19,-.61],[.34,1.19,-.61],.035,rubber,8);
+    quad([-.38,1.11,.50],[.38,1.11,.50],[.38,1.59,.67],[-.38,1.59,.67],'4c634d');
+    for(let i=0;i<5;i++){
+      const x=(i-2)*.14;
+      rod([x,1.19,.54],[x,1.53,.657],.019,'5a755b',6);
+    }
+  });
+  const binFill=part(()=>load(0,.84,.052,.52,.57,.14,30));
+  const binWheel=part(()=>tire(.225,.124));
+  function trashBin(pose,spin,fill,dump){
+    const tipped=compose(pose,transform(0,0,.11,dump*1.12));
+    const out=[{item:binBody,m:tipped}];
+    for(const x of [-.346,.346])out.push({item:binWheel,m:compose(pose,transform(x,.232,-.22,spin))});
+    if(fill>0)out.push({item:binFill,m:compose(tipped,transform(0,-.41*(1-fill),0))});
+    return out;
+  }
+  const bucketCarrier=part(()=>{
+    vessel(-.303,-.232,.79,.18,.255,'667d83','abb9b4',12);
+    const x=-.303,z=.79;
+    for(let i=0;i<8;i++){
+      const a=i*Math.PI/8,b=(i+1)*Math.PI/8;
+      rod([x+.18*Math.cos(a),-.249+.135*Math.sin(a),z],[x+.18*Math.cos(b),-.249+.135*Math.sin(b),z],.012,steel,6);
+    }
+    hand(x,-.118,z-.038,-1);
+  });
+  const bucketFill=part(()=>load(-.303,-.355,.79,.24,.23,.05,15));
+  function carryBucket(fill,dump,walk){
+    const m=transform(0,Math.sin(walk)*.014-.10,0,dump*.55,0,-dump*.20);
+    const out=[{item:bucketCarrier,m}];
+    if(fill>0)out.push({item:bucketFill,m:compose(m,transform(0,-.075*(1-fill),0))});
+    return out;
+  }
   function displayParts(){
     const parts=[];
     for(const [i,data] of displays){
@@ -430,5 +476,5 @@ Rocks.models = (() => {
     }
     return out;
   }
-  return {tools,displayParts,viewModel,barrow,machinery};
+  return {tools,displayParts,viewModel,barrow,trashBin,carryBucket,machinery};
 })();

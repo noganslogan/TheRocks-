@@ -21,7 +21,8 @@ function start({saved=null,software=true,instanced=false}={}){
   function node(selector){
     if(nodes.has(selector))return nodes.get(selector);
     const n={
-      textContent:'',style:{},hidden:false,classList:{add(){},remove(){},toggle(){}},
+      textContent:'',style:{},hidden:false,children:[],classList:{add(){},remove(){},toggle(){}},
+      setAttribute(){},append(...items){this.children.push(...items);},replaceChildren(){this.children=[];},
       clientWidth:844,clientHeight:390,scrollHeight:500,scrollTop:0,
       getBoundingClientRect:()=>({left:14,top:290,width:80,height:80}),
       getContext:(kind)=>kind==='2d'?context:software?null:graphics,
@@ -36,21 +37,21 @@ function start({saved=null,software=true,instanced=false}={}){
     requestAnimationFrame(fn){nextFrame=fn;},
     window:{addEventListener(event,fn){listeners.set(event,fn);}},
     confirm:()=>true,
-    document:{querySelector:node},
+    document:{querySelector:node,createElement(){return {...node('element'),children:[]};}},
     localStorage:{getItem:()=>snapshot,setItem(key,value){snapshot=value;writes++;}}
   };
   vm.createContext(env);
-  for(const file of ['render','models','larry-data','larry-rig','yard','game']){
+  for(const file of ['render','models','larry-data','larry-rig','yard','backyard','phone','game']){
     let code=fs.readFileSync(path.join(root,'js',file+'.js'),'utf8');
     if(file==='game'){
       const marker='  updateUI();\n  requestAnimationFrame(frame);';
       assert.ok(code.includes(marker));
       code=code.replace(marker,`
-        window.harness={surface,larry,heldKeys,openShop,equip,mount,requestAction,
+        window.harness={surface,larry,heldKeys,openShop,equip,mount,requestAction,capacity,phone,
           get player(){return player;},get state(){return state;},get action(){return action;},
           get clock(){return clock;},get blade(){return blade;},get tools(){return tools;},
           inside:()=>shopOpen,current,handTarget,machineTarget,nearTruck,worldBlock,migration,render,
-          advance(dt){clock+=dt;motion(dt);actions();updateLarry(dt);context();surface.step(dt);}};
+          advance(dt){advanceGame(dt);context();surface.step(dt);}};
       `+marker);
     }
     vm.runInContext(code,env,{filename:file+'.js'});
@@ -66,7 +67,7 @@ function start({saved=null,software=true,instanced=false}={}){
   const steps=(n,dt=.055)=>{for(let i=0;i<n;i++)game.advance(dt);};
   const frame=()=>nextFrame(ms+=50);
   event('#start','click');
-  return {game,node,event,key,steps,frame,env,snapshot:()=>snapshot,writes:()=>writes,drawing:()=>drawing,batches:()=>batches};
+  return {game,node,event,key,steps,frame,env,snapshot:()=>snapshot,writes:()=>writes,drawing:()=>drawing,batches:()=>batches,pagehide:()=>listeners.get('pagehide')()};
 }
 
 const test = (name,fn) => {fn();console.log('PASS',name);};
@@ -80,10 +81,10 @@ function setPlayer(g,x,z,yaw=0,pitch=-.18){
 }
 function evidence(g){
   const s=g.state;
-  assert.equal(s.depleted.reduce((a,b)=>a+b,0),s.removed+s.bag+Object.values(s.rubble).reduce((a,b)=>a+b,0));
+  assert.equal(s.depleted.reduce((a,b)=>a+b,0),s.removed+s.bag+s.buffer+Object.values(s.rubble).reduce((a,b)=>a+b,0));
   assert.ok(s.credits>=0&&s.credits<=s.removed);
-  assert.ok(s.bag<=g.current().cap);
-  assert.ok(s.removed+s.bag<=total);
+  assert.ok(s.bag<=g.capacity());
+  assert.ok(s.removed+s.bag+s.buffer<=total);
 }
 
 test('first three rocks, purchase and touch interaction',()=>{
@@ -127,7 +128,7 @@ test('first three rocks, purchase and touch interaction',()=>{
   assert.equal(again.game.state.tier,1);
 });
 
-test('old saves on both renderers, damaged save repair and carry-safe equip',()=>{
+test('old saves on both renderers, damaged save repair and carry-safe swap',()=>{
   const old=(key)=>({removed:440,credits:61,bag:44,tier:3,owned:[0,1,2,3],hits:{[key]:4}});
   for(const key of ['v2:4828','v2:1078']){
     const h=start({saved:JSON.stringify(old(key))}),g=h.game;
@@ -136,8 +137,12 @@ test('old saves on both renderers, damaged save repair and carry-safe equip',()=
     assert.equal(g.state.credits,61);
     evidence(g);
     setPlayer(g,shed.x,shed.z);
-    g.openShop(true);g.equip(1);
-    assert.equal(g.state.tier,3);
+    g.openShop(true);
+    h.event('#shopTabs','click',{target:{closest:()=>({dataset:{shop:'carry'}})}});
+    h.event('#items','click',{target:{closest:()=>({dataset:{tier:'1'}})}});
+    assert.equal(g.state.carry,3);
+    g.equip(1);
+    assert.equal(g.state.tier,1,'tools can swap under a loaded backpack');
     setPlayer(g,pad.x,pad.z);
     g.openShop(false);g.requestAction();h.steps(11);
     assert.equal(g.state.removed,484);assert.equal(g.state.credits,105);
@@ -147,8 +152,16 @@ test('old saves on both renderers, damaged save repair and carry-safe equip',()=
   evidence(repaired.game);
 });
 
-test('full progression from a fresh save through all 16 tools and normal purchase actions',()=>{
+test('full progression from a fresh save through all tools and carriers by purchasing',()=>{
   const h=start(),g=h.game;
+  g.state.phone.nextText=g.state.phone.nextCall=1e9;
+  const B=vm.runInContext('Rocks.backyard',h.env);
+  const shop=(tab,i)=>{
+    setPlayer(g,shed.x,shed.z);
+    g.openShop(true);assert.ok(g.inside());
+    h.event('#shopTabs','click',{target:{closest:()=>({dataset:{shop:tab}})}});
+    h.event('#items','click',{target:{closest:()=>({dataset:{tier:String(i)}})}});
+  };
   const cycleTrip=(at)=>{
     const t=g.current();
     if(t.eye){
@@ -157,7 +170,7 @@ test('full progression from a fresh save through all 16 tools and normal purchas
         if(!g.blade)g.requestAction();
         h.key('keydown','w');h.steps(36);h.key('keyup','w');h.steps(5);
       }else{
-        for(let i=0;i<8&&g.state.bag<t.cap;i++){
+        for(let i=0;i<8&&g.state.bag<g.capacity();i++){
           assert.ok(g.machineTarget(),t.n+' has reachable gravel');
           g.requestAction();h.steps(Math.ceil(t.cycle/.055)+2);
         }
@@ -166,7 +179,7 @@ test('full progression from a fresh save through all 16 tools and normal purchas
       setPlayer(g,0,1.7,-.63,.12);
       if(t.hold){
         h.key('keydown','e');h.steps(44);h.key('keyup','e');h.steps(10);
-      }else for(let i=0;i<9&&g.state.bag<t.cap;i++){
+      }else for(let i=0;i<9&&g.state.bag<g.capacity();i++){
         g.requestAction();h.steps(Math.ceil(t.cycle/.055)+2);
       }
     }
@@ -182,9 +195,10 @@ test('full progression from a fresh save through all 16 tools and normal purchas
     assert.equal(g.state.credits,credit+moves,t.n+' prevented double deposit');
     return moves;
   };
-  const trips=[];
-  for(let i=0;i<g.tools.length;i++){
-    const t=g.current(),next=g.tools[i+1];
+  const trips=[], point={x:3.55,z:-1.2,yaw:-1.61};
+  const carrierAt={0:1,1:2,2:3,4:4,6:5,9:6};
+  for(const [step,i] of B.toolIds.entries()){
+    const t=g.current(), nextId=B.toolIds[step+1], next=g.tools[nextId];
     assert.equal(g.state.tier,i);
     if(t.eye){
       setPlayer(g,entry.x+.65,entry.z+.70);
@@ -197,31 +211,40 @@ test('full progression from a fresh save through all 16 tools and normal purchas
       assert.notEqual(g.state.vehicle.yaw,yaw,t.n+' steers');
     }
     let count=0;
-    do{
-      cycleTrip({x:3.55,z:-1.2,yaw:-1.61});
-      assert.ok(++count<=20,t.n+' reaches next upgrade within 20 full trips');
-    }while(next&&g.state.credits<next.cost);
+    const earn=(cost)=>{
+      do{
+        cycleTrip(point);
+        assert.ok(++count<=25,t.n+' reaches next upgrade within 25 trips');
+      }while(g.state.credits<cost);
+    };
+    if(carrierAt[i]){
+      const id=carrierAt[i];
+      earn(B.carriers[id].cost);
+      shop('carry',id);
+      assert.equal(g.state.carry,id);
+    }
+    earn(next?.cost||1);
     trips.push(count);
     if(!next)break;
     if(t.eye){g.mount();assert.equal(g.state.vehicle.mounted,false);}
-    setPlayer(g,shed.x,shed.z);
-    g.openShop(true);assert.ok(g.inside());
-    if(i===0){g.equip(2);assert.equal(g.state.tier,0,'upgrade prerequisites enforced');}
+    if(i===0){shop('tools',2);assert.equal(g.state.tier,0,'upgrade prerequisites enforced');}
     const credits=g.state.credits;
-    g.equip(i+1);
+    shop('tools',nextId);
     assert.equal(g.state.credits,credits-next.cost);
     if(next.eye)assert.equal(g.state.vehicle.x,entry.x);
     evidence(g);
   }
-  console.log('  Trips per tier:',trips.join(', '));
-  assert.equal(g.state.owned.length,16);
+  console.log('  Trips per tool with carries:',trips.join(', '));
+  assert.equal(g.state.owned.length,14);
+  assert.equal(g.state.carryOwned.length,7);
+  h.pagehide();
   const restored=start({saved:h.snapshot()});
   assert.equal(restored.game.state.tier,15);
   assert.deepEqual(JSON.parse(JSON.stringify(restored.game.state)),JSON.parse(JSON.stringify(g.state)));
 });
 
 test('boulder fracture creates accounted rubble, which saves and stays collectible',()=>{
-  const old={removed:12000,credits:0,tier:8,owned:Array.from({length:9},(_,i)=>i)};
+  const old={removed:12000,credits:0,tier:8,owned:Array.from({length:9},(_,i)=>i),carry:5,carryOwned:[0,1,2,3,4,5]};
   let h=start({saved:JSON.stringify(old)}),g=h.game;
   const r=g.surface.geology[27];
   const v=Math.atan2((r.x+4.4)/7.25,(r.z+2.4)/6.05), outward=[Math.sin(v),Math.cos(v)];
@@ -238,6 +261,8 @@ test('boulder fracture creates accounted rubble, which saves and stays collectib
   setPlayer(g,player.x,player.z,Math.atan2(-outward[0],outward[1]),Math.atan2(g.surface.height(r.x,r.z)+.14-1.58,1.35));
   assert.equal(g.handTarget().rock.id,r.id);
   g.requestAction();h.steps(15);
+  assert.equal(g.state.bag,Math.min(rubble,750));
+  if(g.state.bag<rubble){g.requestAction();h.steps(15);}
   assert.equal(g.state.bag,rubble);
   assert.equal(g.state.rubble[r.id],undefined);
   evidence(g);
@@ -343,4 +368,139 @@ test('mobile driving, parked cargo, reload and unload at the truck',()=>{
   assert.equal(g.state.bag,0);
   assert.equal(g.state.removed,65000);
   evidence(g);
+});
+
+function shopClick(h,tab,i){
+  setPlayer(h.game,shed.x,shed.z);
+  h.game.openShop(true);
+  h.event('#shopTabs','click',{target:{closest:()=>({dataset:{shop:tab}})}});
+  h.event('#items','click',{target:{closest:()=>({dataset:{tier:String(i)}})}});
+}
+function phoneChoice(h,label){
+  const b=h.node('#phoneActions').children.find(node=>node.textContent===label);
+  assert.ok(b&&!b.disabled,label+' is available');
+  b.onclick();
+}
+
+test('pockets, gather training, and foot speed apply independently',()=>{
+  const setup={version:4,removed:1000,credits:1000,bag:0,tier:0,owned:[0],carry:1,carryOwned:[0,1]};
+  const h=start({saved:JSON.stringify(setup)}),g=h.game;
+  shopClick(h,'training',0);shopClick(h,'training',1);shopClick(h,'training',2);
+  g.openShop(false);
+  assert.equal(g.state.credits,785);
+  assert.deepEqual(Array.from(g.state.training),[1,1,1]);
+  assert.equal(g.capacity(),5);
+  setPlayer(g,0,1.7,-.63,.12);
+  g.requestAction();
+  assert.ok(g.action.end<g.current().cycle);
+  h.steps(8);
+  assert.equal(g.state.bag,2);
+  const h0=start({saved:JSON.stringify(setup)});
+  const distances=[h0,h].map(test=>{
+    setPlayer(test.game,5,4);
+    test.key('keydown','w');test.steps(6);test.key('keyup','w');
+    return 4-test.game.player.z;
+  });
+  assert.ok(distances[1]>distances[0]*1.14);
+  evidence(g);
+});
+
+test('wife texts, escalates after dismissal, and stops when answered',()=>{
+  const h=start(),g=h.game,p=g.state.phone;
+  g.advance(.1);
+  assert.ok(!g.phone.visible());
+  p.time=299.97;h.steps(1);
+  assert.ok(g.phone.visible());
+  assert.equal(p.chat[0][1],'Are you almost done? How long is this going to take?');
+  assert.ok(p.unread);
+  h.event('#phoneClose','click');
+  assert.ok(!g.phone.visible()&&p.unread);
+  h.steps(583);
+  assert.ok(g.phone.visible());
+  assert.equal(p.chat.at(-1)[1],'Hello…?');
+  phoneChoice(h,'Still here. Still rocks.');
+  assert.equal(p.chat.at(-1)[0],'me');
+  assert.ok(!p.unread);
+  const after=p.chat.length;
+  h.steps(650);
+  assert.equal(p.chat.length,after);
+  h.event('#phoneClose','click');
+  p.time=1799.97;p.nextText=1800;
+  h.steps(1);
+  assert.ok(p.ring&&g.phone.visible());
+  phoneChoice(h,'Put away');
+  h.steps(330);
+  assert.ok(p.ring&&g.phone.visible());
+  assert.equal(p.chat.at(-1)[1],'Why didn’t you answer?');
+  h.pagehide();
+  const saved=start({saved:h.snapshot()});
+  assert.ok(saved.game.state.phone.ring&&saved.game.phone.visible());
+  phoneChoice(saved,'Answer');
+  assert.ok(saved.game.state.phone.active&&!saved.game.state.phone.ring);
+  assert.match(saved.node('#phoneThread').children[0].textContent,/going to take like an hour/);
+  saved.steps(390);
+  assert.ok(!saved.game.state.phone.active);
+  assert.equal(saved.game.state.phone.chat.at(-1)[1],'Call ended');
+  assert.ok(saved.game.state.phone.unread,'there is still a text to reply to');
+  phoneChoice(saved,'On it.');
+  assert.ok(!saved.game.state.phone.unread);
+});
+
+test('all four buddies charge once and bring real rocks to the truck',()=>{
+  const h=start({saved:JSON.stringify({version:4,removed:555_000_000,credits:555_000_000,owned:[0]})}),g=h.game;
+  h.event('#phoneToggle','click');
+  h.event('#phoneBuddies','click');
+  for(const name of ['Eddie','Marcus','Joey','Dispatch'])phoneChoice(h,'Call '+name);
+  assert.equal(g.state.buddies.length,4);
+  assert.equal(g.state.credits,4_989_900);
+  assert.equal(h.node('#phoneActions').children[0].disabled,true);
+  h.event('#phoneClose','click');
+  h.steps(477);
+  const earned=g.state.removed-555_000_000;
+  assert.ok(earned>0&&earned<=2_671_000);
+  assert.equal(g.state.credits,4_989_900+earned);
+  evidence(g);
+});
+
+test('conveyor holds queued rocks across reload and the collector and crusher produce',()=>{
+  const fixture={version:4,removed:50_000_000,credits:50_000_000,bag:100,tier:3,owned:[0,1,2,3],carry:3,carryOwned:[0,1,2,3]};
+  let h=start({saved:JSON.stringify(fixture)}),g=h.game;
+  const B=vm.runInContext('Rocks.backyard',h.env);
+  shopClick(h,'factory',0);
+  assert.equal(g.state.factory,1);
+  setPlayer(g,B.hopper.x,B.hopper.z);
+  g.requestAction();h.steps(11);
+  assert.equal(g.state.bag,0);
+  assert.equal(g.state.buffer,100);
+  assert.equal(g.state.removed,50_000_000);
+  evidence(g);
+  h=start({saved:h.snapshot()});g=h.game;
+  assert.equal(g.state.buffer,100);
+  const before=g.state.credits;
+  h.steps(85);
+  assert.equal(g.state.buffer,0);
+  assert.equal(g.state.credits,before+100);
+  shopClick(h,'factory',1);
+  h.steps(80);
+  assert.ok(g.state.buffer>0);
+  const beforeFactory=g.state.removed;
+  h.steps(90);
+  assert.ok(g.state.removed>beforeFactory);
+  shopClick(h,'factory',2);assert.equal(g.state.factory,3);
+  h.steps(80);
+  assert.equal(g.state.buffer,3_300_000);
+  evidence(g);
+  h.frame();
+});
+
+test('legacy equipment stays useful and wheelbarrow cargo migrates',()=>{
+  const save={version:3,removed:2000,credits:200,tier:7,bag:1205,owned:[0,1,2,3,4,5,6,7]};
+  const h=start({saved:JSON.stringify(save)}),g=h.game;
+  assert.equal(g.state.tier,6);
+  assert.equal(g.state.carry,5);
+  assert.equal(g.state.bag,1205);
+  assert.equal(g.capacity(),1500);
+  assert.ok(!g.state.owned.includes(7));
+  evidence(g);
+  h.frame();
 });

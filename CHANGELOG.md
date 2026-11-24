@@ -1,3 +1,25 @@
+# THE ROCKS. v0.4
+
+- Split scoop size from carrying capacity. Start with one rock in your hand,
+  then buy pockets, a bucket, a backpack, a wheelbarrow, a reinforced
+  wheelbarrow or a rolling trash bin. Vehicles keep their own capacities.
+- Added five levels each of gather speed, gather amount and run speed.
+- Added four buddies you can call from the phone. They work while the game
+  is active and deliver real rocks to the truck. The hire prices are 100,
+  10,000, 50 million and 500 million rocks.
+- Added a phone with a low-poly contact portrait, messages, incoming calls
+  and replies. Messages arrive every five active minutes, calls every thirty,
+  and ignored notifications escalate.
+- Started factory equipment with a fixed conveyor and feed hopper, a powered
+  collector and a crusher. Queued material persists across reloads.
+- Migrated v0.3 wheelbarrows into the carry progression. Older saves keep
+  their tool unlocks, credits, yard state and cargo.
+
+The automated release suite tests carry upgrades, collection rates, each
+vehicle, legacy saves, phone schedules and replies, all four buddies and the
+factory queue. The phone UI, touch behavior and live rollout still need
+verification on a physical iPhone.
+
 # THE ROCKS. v0.3
 
 - Corrected the shovel blade and pickaxe impact direction. Reworked grips,
