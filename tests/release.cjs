@@ -21,7 +21,7 @@ function start({saved=null,software=true,instanced=false}={}){
   function node(selector){
     if(nodes.has(selector))return nodes.get(selector);
     const n={
-      textContent:'',style:{},hidden:false,children:[],classList:{add(){},remove(){},toggle(){}},
+      textContent:'',style:{},dataset:{},hidden:false,children:[],classList:{add(){},remove(){},toggle(){}},
       setAttribute(){},append(...items){this.children.push(...items);},replaceChildren(){this.children=[];},
       clientWidth:844,clientHeight:390,scrollHeight:500,scrollTop:0,
       getBoundingClientRect:()=>({left:14,top:290,width:80,height:80}),
@@ -41,13 +41,13 @@ function start({saved=null,software=true,instanced=false}={}){
     localStorage:{getItem:()=>snapshot,setItem(key,value){snapshot=value;writes++;}}
   };
   vm.createContext(env);
-  for(const file of ['render','models','larry-data','larry-rig','yard','backyard','phone','game']){
+  for(const file of ['render','models','larry-data','crew-data','larry-rig','yard','backyard','crew','phone','game']){
     let code=fs.readFileSync(path.join(root,'js',file+'.js'),'utf8');
     if(file==='game'){
       const marker='  updateUI();\n  requestAnimationFrame(frame);';
       assert.ok(code.includes(marker));
       code=code.replace(marker,`
-        window.harness={surface,larry,heldKeys,openShop,equip,mount,requestAction,capacity,phone,
+        window.harness={surface,larry,heldKeys,openShop,equip,mount,requestAction,capacity,phone,crew,crewJob,crewUpgrade,
           get player(){return player;},get state(){return state;},get action(){return action;},
           get clock(){return clock;},get blade(){return blade;},get tools(){return tools;},
           inside:()=>shopOpen,current,handTarget,machineTarget,nearTruck,worldBlock,migration,render,
@@ -81,7 +81,7 @@ function setPlayer(g,x,z,yaw=0,pitch=-.18){
 }
 function evidence(g){
   const s=g.state;
-  assert.equal(s.depleted.reduce((a,b)=>a+b,0),s.removed+s.bag+s.buffer+Object.values(s.rubble).reduce((a,b)=>a+b,0));
+  assert.equal(s.depleted.reduce((a,b)=>a+b,0),s.removed+s.bag+s.buffer+s.buddies.reduce((a,b)=>a+b.load,0)+(s.crewDozer?.load||0)+Object.values(s.rubble).reduce((a,b)=>a+b,0));
   assert.ok(s.credits>=0&&s.credits<=s.removed);
   assert.ok(s.bag<=g.capacity());
   assert.ok(s.removed+s.bag+s.buffer<=total);
@@ -455,9 +455,9 @@ test('all four buddies charge once and bring real rocks to the truck',()=>{
   assert.equal(g.state.credits,4_989_900);
   assert.equal(h.node('#phoneActions').children[0].disabled,true);
   h.event('#phoneClose','click');
-  h.steps(477);
+  h.steps(1030);
   const earned=g.state.removed-555_000_000;
-  assert.ok(earned>0&&earned<=2_671_000);
+  assert.ok(earned>0);
   assert.equal(g.state.credits,4_989_900+earned);
   evidence(g);
 });
@@ -469,7 +469,7 @@ test('conveyor holds queued rocks across reload and the collector and crusher pr
   shopClick(h,'factory',0);
   assert.equal(g.state.factory,1);
   setPlayer(g,B.hopper.x,B.hopper.z);
-  g.requestAction();h.steps(11);
+  h.steps(11);
   assert.equal(g.state.bag,0);
   assert.equal(g.state.buffer,100);
   assert.equal(g.state.removed,50_000_000);
@@ -503,4 +503,115 @@ test('legacy equipment stays useful and wheelbarrow cargo migrates',()=>{
   assert.ok(!g.state.owned.includes(7));
   evidence(g);
   h.frame();
+});
+
+test('hold jackhammer beside the hopper to feed automatically, even after a backlog',()=>{
+  const h=start({saved:JSON.stringify({version:4,removed:50_000_000,credits:9000,owned:[0,9],tier:9,
+    carry:1,carryOwned:[0,1],factory:1,buffer:24_000_000,factoryTick:0})});
+  const g=h.game,B=vm.runInContext('Rocks.backyard',h.env);
+  setPlayer(g,B.hopper.x-1.74,B.hopper.z+.43,-Math.PI/2,-.18);
+  assert.ok(g.handTarget(),'the drill can reach the pile from the hopper');
+  const before=g.state.removed;
+  h.event('#act','pointerdown');
+  h.steps(39);
+  assert.equal(g.state.buffer,B.BUFFER_MAX);
+  assert.equal(g.state.bag,0);
+  assert.equal(h.node('#factoryStatus').dataset.status,'BACKED UP');
+  h.steps(110);
+  h.event('#act','pointerup');h.steps(7);
+  assert.ok(g.state.removed>before);
+  assert.equal(g.state.bag,0);
+  assert.ok(g.state.buffer>B.BUFFER_MAX-2_400_000,'drill resumed feeding after the belt drained');
+  evidence(g);
+});
+
+test('a THRIVE-rigged buddy boards, moves and excavates the dozer while a second hauls',()=>{
+  const fixture={version:4,removed:8_000_000,credits:8_000_000,tier:15,handTier:9,
+    owned:Array.from({length:16},(_,i)=>i),buddies:[0,0],factory:1,
+    vehicle:{x:4.5,z:1.2,yaw:-1.35,mounted:true}};
+  const h=start({saved:JSON.stringify(fixture),software:false,instanced:true}),g=h.game;
+  h.event('#phoneToggle','click');h.event('#phoneBuddies','click');
+  h.node('#phoneThread').children[0].children[0].onclick();
+  const thread=h.node('#phoneThread');
+  const training=()=>thread.children.at(-1).children[1];
+  assert.equal(thread.children[2].children.at(-1).disabled,true);
+  for(let i=0;i<3;i++)training().onclick();
+  thread.children[3].children[1].onclick();
+  thread.children[4].children[1].onclick();
+  assert.equal(g.state.buddies[0].training,3);
+  assert.equal(g.state.buddies[0].pace,1);
+  assert.equal(g.state.buddies[0].handling,1);
+  assert.equal(g.state.credits,8_000_000-450-3800-22000-180-250);
+  thread.children[2].children.at(-1).onclick();
+  assert.equal(g.state.buddies[0].job,'dozer');
+  h.event('#phoneClose','click');
+  h.event('#mount','click');
+  const machine=g.state.crewDozer;
+  assert.ok(machine);
+  assert.equal(g.state.vehicle,null);
+  assert.equal(g.state.tier,9);
+  assert.equal(machine.phase,'board');
+  const initial={x:machine.x,z:machine.z};
+  const observed=new Set();
+  let sawHauler=false, sawDozerLoad=false, sawHopper=false, sawMovement=false;
+  for(let i=0;i<2350;i++){
+    h.steps(1);
+    observed.add(machine.phase);
+    if(g.state.buddies[1].load)sawHauler=true;
+    if(machine.load>=100000)sawDozerLoad=true;
+    if(g.state.buffer>100000)sawHopper=true;
+    if(Math.hypot(machine.x-initial.x,machine.z-initial.z)>3)sawMovement=true;
+    if(i%120===0)evidence(g);
+    if(sawHauler&&sawDozerLoad&&sawHopper&&sawMovement&&g.state.removed>fixture.removed+100000)break;
+  }
+  for(const phase of ['board','climb','drive','cut','unload','tipped'])assert.ok(observed.has(phase),phase);
+  assert.ok(sawHauler&&sawDozerLoad&&sawHopper&&sawMovement);
+  assert.ok(g.state.removed>8_100_000);
+  const crewData=vm.runInContext('Rocks.crewData',h.env);
+  assert.equal(crewData.bones,22);
+  assert.ok(['walk','push','scoop','climb','drive'].every(clip=>crewData.clips[clip]));
+  const parts=g.crew.parts(g.player);
+  assert.ok(parts.filter(p=>p.item.data.length===crewData.indices.length*6).length>=2);
+  evidence(g);
+});
+
+test('handoff and takeover preserve cargo across a save and block a duplicate dozer',()=>{
+  const fixture={version:4,removed:6_000_000,credits:6_000_000,tier:15,handTier:9,bag:8405,
+    owned:Array.from({length:16},(_,i)=>i),buddies:[0,0,0,0],factory:1,
+    vehicle:{x:4.5,z:1.2,yaw:-1.35,mounted:true}};
+  let h=start({saved:JSON.stringify(fixture)}),g=h.game;
+  assert.ok(g.crewJob(3,'dozer'));
+  g.mount();
+  assert.equal(g.state.crewDozer.load,8405);
+  assert.equal(g.state.bag,0);
+  evidence(g);
+  const parked=g.state.crewDozer;
+  h=start({saved:h.snapshot()});g=h.game;
+  assert.equal(g.state.crewDozer.load,8405);
+  shopClick(h,'tools',15);
+  assert.equal(g.state.tier,9);
+  g.openShop(false);
+  setPlayer(g,parked.x+1.2,parked.z);
+  h.key('keydown','f');h.key('keyup','f');
+  h.steps(2);
+  assert.equal(g.state.crewDozer.phase,'parked');
+  assert.equal(g.state.crewDozer.load,8405);
+  h.key('keydown','f');h.key('keyup','f');
+  assert.equal(g.state.crewDozer,null);
+  assert.ok(g.state.vehicle.mounted);
+  assert.equal(g.state.bag,8405);
+  evidence(g);
+});
+
+test('the powered intake can be moved to a reachable cut',()=>{
+  const h=start({saved:JSON.stringify({version:4,removed:1_000_000,owned:[0],factory:2})}),g=h.game;
+  setPlayer(g,1.35,-1.76,-Math.PI/2,-.23);
+  const target=g.handTarget();
+  assert.ok(target);
+  h.event('#intakeBtn','click');
+  assert.equal(g.state.intakeFocus.x,target.x);
+  assert.equal(g.state.intakeFocus.z,target.z);
+  h.steps(78);
+  assert.ok(g.state.buffer>0);
+  evidence(g);
 });

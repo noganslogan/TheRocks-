@@ -1,10 +1,11 @@
 'use strict';
 
-Rocks.phone = function({getState,save,interrupt,hired}){
-  const B=Rocks.backyard;
+Rocks.phone = function({getState,save,interrupt,hired,setJob,upgrade}){
+  const B=Rocks.backyard, C=Rocks.crew;
   const $=selector=>document.querySelector(selector), button=$('#phoneToggle'), panel=$('#phoneOverlay');
   const thread=$('#phoneThread'), title=$('#phoneTitle'), meta=$('#phoneMeta'), footer=$('#phoneActions');
-  let visible=false, tab='texts', audio=null, serial=-1;
+  let visible=false, tab='texts', audio=null, serial=-1, selected=null;
+  let crewStatus=[], wasParked=false;
 
   function arm(){
     try{
@@ -81,9 +82,59 @@ Rocks.phone = function({getState,save,interrupt,hired}){
   function timeLabel(n){
     return Math.floor(n/60)+':'+String(Math.floor(n)%60).padStart(2,'0');
   }
+  function crewButton(label,fn,disabled=false){
+    const button=document.createElement('button');
+    button.type='button';button.textContent=label;button.disabled=disabled;
+    if(fn)button.onclick=fn;
+    return button;
+  }
+  function drawCrew(state){
+    crewStatus=[];
+    if(selected!==null&&!state.buddies[selected])selected=null;
+    if(selected!==null){
+      const i=selected,b=state.buddies[i], person=B.buddies[i], d=state.crewDozer;
+      wasParked=d?.driver===i&&d.phase==='parked';
+      title.textContent=person.name;
+      const summary=textNode('crew-summary',C.status(state,b,i));
+      crewStatus.push([i,summary]);
+      thread.append(crewButton('‹ All buddies',()=>{selected=null;render();}),summary);
+      const jobs=textNode('crew-jobs','');
+      const assign=(label,job,disabled=false)=>jobs.append(crewButton(label,()=>{if(setJob(i,job))render();},disabled));
+      if(d?.driver===i){
+        if(d.phase==='parked')assign('Resume bulldozer','resume');
+        else assign(d.reclaim?'Parking…':'Park bulldozer','park',d.reclaim);
+      }else{
+        assign('Haul','haul',b.job==='haul');
+        assign('Rest','rest',b.job==='rest');
+        assign('Assign bulldozer','dozer',!state.owned.includes(C.DOZER)||b.training<3||b.job==='dozer'||!!d);
+      }
+      thread.append(jobs);
+      for(const u of C.training){
+        const row=textNode('crew-upgrade',''), price=C.price(b,i,u.key);
+        row.append(textNode('contact-name',u.name+' · '+(u.key==='training'?C.rankNames[b.training]:'Lv '+b[u.key])));
+        row.append(crewButton(price?price.toLocaleString('en-US')+' rocks':'Maxed',()=>{if(upgrade(i,u.key))render();},
+          !price||state.credits<price));
+        thread.append(row);
+      }
+      controls([['Put away','quiet',close]]);
+      return;
+    }
+    const next=state.buddies.length;
+    B.buddies.forEach((b,i)=>{
+      const row=textNode('contact','');
+      const status=textNode('contact-status',i<next?C.status(state,state.buddies[i],i):i===next?b.cost.toLocaleString('en-US')+' rocks':'Locked');
+      row.append(i<next?crewButton(b.name,()=>{selected=i;render();}):textNode('contact-name',b.name),status);
+      if(i<next)crewStatus.push([i,status]);
+      thread.append(row);
+    });
+    const buddy=B.buddies[next];
+    controls(buddy?[[`Call ${buddy.name}`,'answer',()=>{if(hired(next))render();},state.credits<buddy.cost]]:
+      [['Manage a buddy above','quiet',null,true]]);
+  }
   function render(){
     shortcuts();
     if(!visible)return;
+    crewStatus=[];
     const state=getState(), p=state.phone;
     const isCall=p.ring||p.active;
     title.textContent=tab==='buddies'&&!isCall?'Call a buddy':'Wife';
@@ -99,16 +150,7 @@ Rocks.phone = function({getState,save,interrupt,hired}){
       thread.append(textNode('call-card',p.active?B.calls[(p.callIndex-1)%B.calls.length]:'Your wife is calling.'));
       controls(p.active?[['End call','decline',hangup]]:[['Answer','answer',answer],['Put away','quiet',close]]);
     }else if(tab==='buddies'){
-      const next=state.buddies.length;
-      B.buddies.forEach((b,i)=>{
-        const row=textNode('contact','');
-        row.append(textNode('contact-name',b.name));
-        row.append(textNode('contact-status',i<next?'On the job':i===next?b.cost.toLocaleString('en-US')+' rocks':'Locked'));
-        thread.append(row);
-      });
-      const buddy=B.buddies[next];
-      controls(buddy?[[`Call ${buddy.name}`,'answer',()=>{if(hired(next))render();},state.credits<buddy.cost]]:
-        [['Crew is on the job','quiet',null,true]]);
+      drawCrew(state);
     }else{
       for(const [who,text] of p.chat)thread.append(textNode('bubble '+who,text));
       if(!p.chat.length)thread.append(textNode('call-card','No messages yet.'));
@@ -127,6 +169,13 @@ Rocks.phone = function({getState,save,interrupt,hired}){
     }else if(visible&&p.active&&serial!==Math.floor(p.callAge)){
       serial=Math.floor(p.callAge);
       meta.textContent='Connected · '+timeLabel(p.callAge);
+    }else if(visible&&tab==='buddies'){
+      const s=getState(),d=s.crewDozer;
+      if(selected!==null&&d?.driver===selected&&wasParked!==(d.phase==='parked')){render();return;}
+      for(const [i,node] of crewStatus){
+        const label=C.status(s,s.buddies[i],i);
+        if(node.textContent!==label)node.textContent=label;
+      }
     }
   }
   button.onclick=()=>{arm();if(visible)close();else open();};

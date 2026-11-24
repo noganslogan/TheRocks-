@@ -1,7 +1,7 @@
 'use strict';
 
 Rocks.backyard = (() => {
-  const {build,mesh,box,rod,cylinder,stone,transform,worldPose,compose,mix,clamp,palette}=Rocks.render;
+  const {build,mesh,box,rod,cylinder,stone,transform,mix,clamp,palette}=Rocks.render;
   const carriers=[
     {name:'In your hand',cap:1,cost:0,detail:'Deliver one rock at a time.'},
     {name:'Pockets',cap:5,cost:1,detail:'Make use of cargo shorts.'},
@@ -18,10 +18,10 @@ Rocks.backyard = (() => {
     {name:'Run speed',costs:[40,280,1300,7500,30000],detail:'Move faster on foot, even when hauling a carrier.'}
   ];
   const buddies=[
-    {name:'Eddie',cost:100,load:36,time:26,shirt:'647f9a'},
-    {name:'Marcus',cost:10000,load:950,time:23,shirt:'ae7254'},
-    {name:'Joey',cost:50_000_000,load:170000,time:19,shirt:'996b95'},
-    {name:'Dispatch',cost:500_000_000,load:2_500_000,time:18,shirt:'a58c46'}
+    {name:'Eddie',cost:100,load:36,training:0,shirt:'647f9a',skin:'cc9473',hair:'493629',build:[.94,.99,1.04]},
+    {name:'Marcus',cost:10000,load:950,training:1,shirt:'ae7254',skin:'996446',hair:'2e2520',build:[1.13,1.07,1]},
+    {name:'Joey',cost:50_000_000,load:170000,training:2,shirt:'996b95',skin:'dab18f',hair:'925f32',build:[1.02,.95,1.03]},
+    {name:'Dispatch',cost:500_000_000,load:2_500_000,training:3,shirt:'a58c46',skin:'a87458',hair:'433930',build:[1.18,1.04,.96]}
   ];
   const factory=[
     {name:'Conveyor line',cost:2_000_000,detail:'An outdoor hopper and powered belt route your loads into the truck.'},
@@ -32,6 +32,7 @@ Rocks.backyard = (() => {
   const beltEnd={x:9.6,z:-5.23};
   const intake={x:1.58,z:-6.12};
   const output={x:10.8,z:-5.0};
+  const defaultPickup={x:.55,z:-5.48}, pickupRadius=3.55, intakeTether=11;
   const BUFFER_MAX=24_000_000;
   const fresh=()=>({
     carry:0,carryOwned:[0],training:[0,0,0],buddies:[],
@@ -51,7 +52,6 @@ Rocks.backyard = (() => {
     if(!s.owned.includes(s.tier))s.owned.push(s.tier);
     if(s.carryOwned.includes(raw.carry))s.carry=raw.carry;
     s.training=training.map((v,i)=>int(raw.training?.[i],v.costs.length));
-    s.buddies=Array.isArray(raw.buddies)?raw.buddies.slice(0,buddies.length).map((n,i)=>elapsed(n,buddies[i].time)):[];
     s.factory=int(raw.factory,factory.length);
     s.buffer=s.factory?int(raw.buffer,Math.min(BUFFER_MAX,Rocks.yard.TOTAL-s.removed)):0;
     s.factoryTick=elapsed(raw.factoryTick,4);
@@ -66,7 +66,7 @@ Rocks.backyard = (() => {
     }
     const t=Rocks.models.tools[s.tier];
     const oldBag=int(raw.bag,Rocks.yard.TOTAL-s.removed-s.buffer);
-    if(raw.version!==4&&!t.eye && carriers[s.carry].cap<oldBag){
+    if(!(raw.version>=4)&&!t.eye && carriers[s.carry].cap<oldBag){
       const suitable=carriers.findIndex(c=>c.cap>=oldBag);
       s.carry=suitable===-1?carriers.length-1:suitable;
       for(let i=0;i<=s.carry;i++)if(!s.carryOwned.includes(i))s.carryOwned.push(i);
@@ -142,6 +142,13 @@ Rocks.backyard = (() => {
     return activity;
   }
   const part=draw=>mesh(build(draw));
+  function blocksFactory(x,z,radius,level){
+    if(!level)return false;
+    const u=clamp((x-hopper.x)/(beltEnd.x-hopper.x),0,1);
+    const centreZ=mix(hopper.z,beltEnd.z,u);
+    if(x>hopper.x-.44-radius&&x<beltEnd.x+.47+radius&&Math.abs(z-centreZ)<.39+radius)return true;
+    return level>=2&&Math.abs(x-intake.x)<.70+radius&&Math.abs(z-intake.z)<.59+radius;
+  }
   const belt=part(()=>{
     for(let i=0;i<9;i++){
       const x=mix(hopper.x,beltEnd.x,(i+.5)/9),z=mix(hopper.z,beltEnd.z,(i+.5)/9),h=.66+i*.066;
@@ -176,10 +183,28 @@ Rocks.backyard = (() => {
     cylinder(x-.58,1.63,z,.20,.17,'777c72','x');
   });
   const travelling=part(()=>stone({x:0,y:0,z:0,size:.14,seed:2.63,mat:palette[1]}));
-  function factoryParts(s){
+  const nozzle=part(()=>{
+    box(0,.15,0,.56,.26,.40,'515d55');
+    box(0,.092,.16,.52,.09,.15,'a7a47c');
+    cylinder(0,.238,-.14,.094,.15,'667167','z',8);
+  });
+  const hose={};let hoseKey='';
+  function factoryParts(s,surface){
     if(!s.factory)return [];
     const out=[{item:belt}];
-    if(s.factory>=2)out.push({item:collector});
+    if(s.factory>=2){
+      const point=s.intakeFocus||defaultPickup;
+      const y=surface.height(point.x,point.z), key=[point.x,point.z,Math.round(y*10)].join('/');
+      if(key!==hoseKey){
+        hoseKey=key;
+        Rocks.render.setMesh(hose,build(()=>{
+          const middle=[mix(intake.x,point.x,.57),.38+y*.48,mix(intake.z,point.z,.57)];
+          rod([intake.x-.45,.57,intake.z],middle,.094,'48544c',8);
+          rod(middle,[point.x,y+.16,point.z],.094,'48544c',8);
+        }));
+      }
+      out.push({item:collector},{item:hose},{item:nozzle,m:transform(point.x,y,point.z,0,Math.atan2(intake.x-point.x,intake.z-point.z))});
+    }
     if(s.factory>=3)out.push({item:crusher});
     if(s.buffer) for(let i=0;i<12;i++){
       const p=(i/12+s.phone.time*.43)%1;
@@ -188,47 +213,6 @@ Rocks.backyard = (() => {
     }
     return out;
   }
-  const NPCs=buddies.map(buddy=>part(()=>{
-    const outfit=buddy.shirt;
-    box(0,1.16,0,.42,.48,.23,outfit);
-    box(0,1.535,.01,.25,.277,.21,'ba8e6d');
-    box(0,1.665,-.022,.27,.10,.24,'49463a');
-    box(0,1.636,.127,.29,.032,.106,outfit);
-    for(const side of [-1,1]){
-      rod([side*.19,1.33,.018],[side*.317,1.006,.20],.074,outfit,7);
-      rod([side*.317,1.006,.20],[side*.26,.939,.39],.062,'bd9478',7);
-      rod([side*.265,.92,.39],[side*.22,.90,.63],.03,'7b6a54',6);
-    }
-    box(0,.76,.71,.51,.193,.43,'88866b');
-  }));
-  const boot=part(()=>{
-    box(0,-.317,0,.159,.67,.142,'59594c');
-    box(0,-.629,.058,.19,.108,.255,'aeaa92');
-  });
-  const cartWheel=part(()=>{
-    cylinder(0,0,0,.143,.116,'414642','x',9);
-    cylinder(.067,0,0,.068,.023,'8c8c7d','x',8);
-    rod([.081,0,-.047],[.081,0,.047],.013,'a7a492',6);
-  });
-  const buddyLoad=part(()=>{
-    for(let i=0;i<8;i++){
-      const a=i*2.39;
-      stone({x:Math.sin(a)*.177,y:.06,z:Math.cos(a)*.139,size:.062+i%3*.014,seed:i,mat:palette[i]});
-    }
-  });
-  function buddyParts(s){
-    const parts=[];
-    for(const [i,age] of s.buddies.entries()){
-      const t=age/buddies[i].time, outbound=t<.52, stride=Math.sin(age*5.4);
-      const phase=outbound?t/.52:(1-t)/.48;
-      const pose=worldPose(mix(9.15,2.10,phase),Math.abs(stride)*.022-.137,
-        mix(-1.36,1.08,phase)+i*.54,Math.atan2(outbound?-7:7,outbound?-2.4:2.4));
-      parts.push({item:NPCs[i],m:pose},{item:cartWheel,m:compose(pose,transform(0,.29,.91,-age*4.2))});
-      for(const side of [-1,1])parts.push({item:boot,m:compose(pose,transform(side*.118,.85,0,side*stride*.26))});
-      if(!outbound)parts.push({item:buddyLoad,m:compose(pose,transform(0,.86,.71))});
-    }
-    return parts;
-  }
-  return {carriers,toolIds,training,buddies,factory,hopper,intake,BUFFER_MAX,fresh,restore,capacity,rate,speed,prevTool,
-    timetable,record,calls,factoryParts,buddyParts};
+  return {carriers,toolIds,training,buddies,factory,hopper,intake,defaultPickup,pickupRadius,intakeTether,BUFFER_MAX,fresh,restore,capacity,rate,speed,prevTool,
+    timetable,record,calls,factoryParts,blocksFactory};
 })();

@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  const $=s=>document.querySelector(s), R=Rocks.render, Y=Rocks.yard, M=Rocks.models, B=Rocks.backyard;
+  const $=s=>document.querySelector(s), R=Rocks.render, Y=Rocks.yard, M=Rocks.models, B=Rocks.backyard, C=Rocks.crew;
   const {TOTAL,pile,truck,shed,delivery,chair,cells}=Y, {tools}=M;
   const {clamp,mix,TAU,worldPose}=R;
   const canvas=R.canvas;
@@ -11,7 +11,7 @@
   }
   const SAVE='the-rocks-v01', pad={x:truck.x,z:truck.z+2.75};
   const spawn={x:-.65,z:5.6,yaw:-.39,pitch:-.02};
-  const fresh=()=>({version:4,...B.fresh(),credits:0,removed:0,bag:0,tier:0,owned:[0],hits:{},rubble:{},depleted:Y.spread(0),vehicle:null});
+  const fresh=()=>({version:5,...B.fresh(),crewDozer:null,handTier:0,intakeFocus:null,credits:0,removed:0,bag:0,tier:0,owned:[0],hits:{},rubble:{},depleted:Y.spread(0),vehicle:null});
   const num=n=>n.toLocaleString('en-US');
   const int=(n,max=TOTAL)=>Number.isFinite(n)?clamp(Math.trunc(n),0,max):0;
   const finite=(n,fallback)=>Number.isFinite(n)?n:fallback;
@@ -24,6 +24,11 @@
     s.tier=s.owned.includes(raw.tier)?raw.tier:0;
     B.restore(s,raw);
     const t=tools[s.tier];
+    const hand=raw.handTier;
+    s.handTier=t.eye?(s.owned.includes(hand)&&!tools[hand]?.eye?hand:s.owned.filter(i=>!tools[i].eye).at(-1)):s.tier;
+    if(s.factory>=2&&Number.isFinite(raw.intakeFocus?.x)&&Number.isFinite(raw.intakeFocus?.z)&&Math.hypot(raw.intakeFocus.x-B.intake.x,raw.intakeFocus.z-B.intake.z)<=B.intakeTether)
+      s.intakeFocus={x:raw.intakeFocus.x,z:raw.intakeFocus.z};
+    C.restore(s,raw);
     for(const [key,n] of Object.entries(raw.hits||{})){
       let id=key;
       if(key.startsWith('v2:')){
@@ -34,7 +39,7 @@
       if(!match||+match[1]>=38)continue;
       s.hits[id]=int(n,+match[1]<26?2:4);
     }
-    let pending=TOTAL-s.removed-s.bag-s.buffer;
+    let pending=TOTAL-s.removed-s.bag-s.buffer-C.totalLoad(s);
     for(const [id,n] of Object.entries(raw.rubble||{})){
       if(!Object.prototype.hasOwnProperty.call(s.hits,id))continue;
       const amount=int(n,Math.min(1800,pending));
@@ -86,12 +91,18 @@
   const nearShed=()=>!mounted()&&Math.abs(player.x-shed.x)<2.52&&player.z>shed.z-3.30&&player.z<shed.z+1.15;
   const nearTruck=()=>close(player,pad,mounted()?3.05:2.23);
   const nearVehicle=()=>state.vehicle&&close(player,state.vehicle,current().width*.65+1.34);
-  const nearHopper=()=>state.factory>0&&close(player,B.hopper,mounted()?2.82:1.78);
-  const yardLeft=()=>TOTAL-state.removed-state.bag-state.buffer;
+  const nearHopper=()=>state.factory>0&&close(player,B.hopper,mounted()?2.82:2.16);
+  const nearCrewDozer=()=>state.crewDozer&&close(player,state.crewDozer,2.92);
+  const unloadable=()=>state.bag&&(!current().eye||mounted());
+  const directFeed=()=>!current().eye&&nearHopper();
+  const room=()=>directFeed()?B.BUFFER_MAX-state.buffer:capacity()-state.bag;
+  const yardLeft=()=>TOTAL-state.removed-state.bag-state.buffer-C.totalLoad(state);
   const phone=Rocks.phone({
-    getState:()=>state,save,hired:hireBuddy,
+    getState:()=>state,save,hired:hireBuddy,setJob:crewJob,upgrade:crewUpgrade,
     interrupt(){clearMovement();speed=0;}
   });
+  const crew=C.create({getState:()=>state,surface,blocked:worldBlock,harvest:harvestAt,feed:feedBelt,deposit,pad,
+    refresh(){updateUI();save();}});
   function save(){
     try{localStorage.setItem(SAVE,JSON.stringify(state));}catch{}
     lastSave=clock;
@@ -101,6 +112,13 @@
     $('#toast').classList.add('show');
     toastUntil=clock+1.95;
   }
+  function factoryStatus(){
+    if(!state.factory)return;
+    const status=state.buffer>=B.BUFFER_MAX*.95?'BACKED UP':state.buffer?'RUNNING':'STARVED';
+    const hud=$('#factoryStatus'), detail=status+' · '+num(state.buffer)+' in hopper';
+    if(hud.textContent!==detail)hud.textContent=detail;
+    hud.dataset.status=status;
+  }
   function updateUI(){
     const t=current();
     $('#remaining').textContent=num(yardLeft());
@@ -109,6 +127,7 @@
     $('#bag').textContent=`${num(state.bag)} / ${num(capacity())}`;
     $('#bagLabel').textContent=state.bag>=capacity()?'FULL · unload':t.mode==='dozer'?'ahead of blade':t.eye?'machine load':carrier().name;
     $('#bar i').style.width=`${state.removed/TOTAL*100}%`;
+    $('#factoryStatus').hidden=!state.factory;factoryStatus();
     if(shopOpen)drawShop();
   }
   function shopRow(name, detail, description, label, index, disabled, buy){
@@ -138,10 +157,11 @@
     }else{
       rows=B.toolIds.map(i=>{
         const t=tools[i], own=state.owned.includes(i), selected=state.tier===i;
-        const disabled=selected||(!own&&(state.credits<t.cost||!state.owned.includes(B.prevTool(i))));
+        const delegated=i===C.DOZER&&state.crewDozer;
+        const disabled=selected||delegated||(!own&&(state.credits<t.cost||!state.owned.includes(B.prevTool(i))));
         const count=B.rate(state,t), rate=t.hold||t.mode==='dozer'?num(Math.round(count/t.cycle))+'/sec':num(count)+'/action';
         const detail=t.eye?num(t.cap)+' capacity · '+rate:rate+' · carry sold separately';
-        return shopRow(t.n,detail,t.desc,selected?'Equipped':own?'Equip':num(t.cost)+' rocks',i,disabled,!own);
+        return shopRow(t.n,detail,t.desc,delegated?'With crew':selected?'Equipped':own?'Equip':num(t.cost)+' rocks',i,disabled,!own);
       });
     }
     $('#items').innerHTML=rows.join('');
@@ -170,6 +190,10 @@
   function equip(i){
     const t=tools[i], own=state.owned.includes(i);
     if(!t||!B.toolIds.includes(i)||state.tier===i||!shopOpen||!nearShed()||action)return;
+    if(i===C.DOZER&&state.crewDozer){
+      say('Your crew has the bulldozer. Use Take over beside it.');
+      return;
+    }
     if(state.bag&&(current().eye||t.eye)){
       say('Unload the current equipment before switching.');
       return;
@@ -180,6 +204,7 @@
       state.owned.push(i);
     }
     state.tier=i;
+    if(!t.eye)state.handTier=i;
     state.vehicle=t.eye?{...delivery,mounted:false}:null;
     speed=steering=wheel=0;blade=false;
     openShop(false);
@@ -215,13 +240,39 @@
     const buddy=B.buddies[i];
     if(!buddy||i!==state.buddies.length||state.credits<buddy.cost)return false;
     state.credits-=buddy.cost;
-    state.buddies.push(0);
+    state.buddies.push(C.newHire(i));
     B.record(state.phone,'log',buddy.name+' is on the way.');
     save();updateUI();
     return true;
   }
-  function worldBlock(x,z,vehicle=false){
-    const radius=vehicle?current().width*.46:.24;
+  function crewUpgrade(i,key){
+    const buddy=state.buddies[i];
+    if(!buddy)return false;
+    const price=C.price(buddy,i,key);
+    if(!price||price>state.credits)return false;
+    state.credits-=price;buddy[key]++;
+    updateUI();save();
+    return true;
+  }
+  function crewJob(i,job){
+    const buddy=state.buddies[i], d=state.crewDozer;
+    if(!buddy)return false;
+    if(d?.driver===i){
+      if(job==='park'&&d.phase!=='parked')d.reclaim=true;
+      else if(job==='resume'&&d.phase==='parked'){d.phase='board';d.age=0;d.reclaim=false;}
+      else return false;
+    }else if(job==='dozer'){
+      if(!state.owned.includes(C.DOZER)||buddy.training!==3||d)return false;
+      for(const b of state.buddies)if(b.job==='dozer')b.job='haul';
+      buddy.job=job;
+    }else if(job==='rest'||job==='haul'){
+      buddy.job=job;
+    }else return false;
+    save();
+    return true;
+  }
+  function worldBlock(x,z,vehicle=false,tool=current()){
+    const radius=vehicle?tool.width*.46:.24;
     if(x<-14.12+radius||x>14.12-radius||z<-11.64+radius||z>7.83-radius)return true;
     if(Math.abs(x-truck.x)<1.02+radius&&Math.abs(z-truck.z)<2.10+radius)return true;
     if(Math.abs(x-chair.x)<.37+radius&&Math.abs(z-chair.z)<.34+radius)return true;
@@ -230,32 +281,65 @@
     if(Math.abs(dx)<2.07+radius&&Math.abs(dz)<1.69+radius){
       if(vehicle||dz>1.0||Math.abs(dx)>.99)return true;
     }
+    if(B.blocksFactory(x,z,radius,state.factory))return true;
     const height=surface.height(x,z);
-    return height>(vehicle?(.80+current().width*.14):.51);
+    return height>(vehicle?(.80+tool.width*.14):.51);
+  }
+  function crewDriver(){return state.buddies.findIndex(b=>b.job==='dozer'&&b.training===3);}
+  function takeOver(){
+    const d=state.crewDozer;
+    if(d.phase!=='parked'){
+      d.reclaim=true;save();
+      say(B.buddies[d.driver].name+' is parking the bulldozer.');
+      return;
+    }
+    if(state.bag){say('Unload your current rocks before taking over.');return;}
+    state.tier=C.DOZER;
+    state.vehicle={x:d.x,z:d.z,yaw:d.yaw,mounted:true};
+    state.bag=d.load;
+    state.crewDozer=null;
+    startDriving(state.vehicle);
+    say('You have the bulldozer. Exit to hand it back to '+B.buddies[d.driver].name+'.');
+  }
+  function startDriving(v){
+    v.mounted=true;
+    player.x=v.x;player.z=v.z;player.yaw=v.yaw;player.pitch=-.17;
+    speed=steering=wheel=0;blade=false;
   }
   function mount(){
     const v=state.vehicle;
-    if(!started||shopOpen||phone.visible()||!v||action)return;
+    if(!started||shopOpen||phone.visible()||action)return;
+    if(!mounted()&&nearCrewDozer()){
+      takeOver();clearMovement();updateUI();save();return;
+    }
+    if(!v)return;
     if(v.mounted){
       const t=current(), lateral=[Math.cos(v.yaw),Math.sin(v.yaw)], front=facing(v.yaw);
+      const d=t.width*.56+.72;
       const clear=[[0,1],[0,-1],[-1,0],[1,0]].find(([f,l])=>
-        !worldBlock(v.x+(front[0]*f+lateral[0]*l)*(t.width*.56+.72),v.z+(front[1]*f+lateral[1]*l)*(t.width*.56+.72)));
+        !worldBlock(v.x+(front[0]*f+lateral[0]*l)*d,v.z+(front[1]*f+lateral[1]*l)*d));
       if(!clear){say('Move somewhere with room to step out.');return;}
-      const [f,l]=clear, d=t.width*.56+.72;
+      const [f,l]=clear;
       player.x=v.x+(front[0]*f+lateral[0]*l)*d;player.z=v.z+(front[1]*f+lateral[1]*l)*d;
       v.mounted=false;
       blade=false;
       speed=0;
-      say(t.n+' parked.');
+      const driver=state.tier===C.DOZER?crewDriver():-1;
+      if(driver>=0){
+        state.crewDozer={driver,x:v.x,z:v.z,yaw:v.yaw,phase:'board',load:state.bag,wait:0,age:0,reclaim:false,spin:wheel,seated:false};
+        state.vehicle=null;
+        state.bag=0;
+        state.tier=state.handTier;
+        say(B.buddies[driver].name+' is taking over. '+current().n+' ready.');
+      }else say(t.n+' parked.');
     }else if(nearVehicle()){
-      v.mounted=true;
-      player.x=v.x;player.z=v.z;player.yaw=v.yaw;player.pitch=-.17;
+      startDriving(v);
       say(current().mode==='dozer'?'Lower the blade and drive into the pile.':'Drive to the pile to load.');
     }else{
       say('Walk up to the delivered machine.');
       return;
     }
-    clearMovement();save();
+    clearMovement();updateUI();save();
   }
   function motion(dt){
     let sx=stick.x+Number(heldKeys.has('d'))-Number(heldKeys.has('a'));
@@ -375,20 +459,19 @@
       else mount();
       return;
     }
-    if(state.bag&&(nearTruck()||nearHopper())){
-      if(!nearTruck()&&state.buffer>=B.BUFFER_MAX){say('The hopper is full. Give the belt a moment.');return;}
+    if(state.bag&&nearTruck()){
       const cycle=t.eye?.88:carrier().rig?.60:.39;
-      action={kind:'dump',start:clock,end:cycle,at:cycle*.59,done:false,toBelt:!nearTruck()};
+      action={kind:'dump',start:clock,end:cycle,at:cycle*.59,done:false};
       return;
     }
     if(nearShed()){openShop(true);return;}
-    if(!yardLeft()){say(state.bag?'Bring the last load to the truck.':state.buffer?'The last rocks are on the conveyor.':'Done. Larry thinks you missed one.');return;}
+    if(!yardLeft()){say(state.bag?'Bring the last load to the truck.':state.removed<TOTAL?'The last rocks are on their way to the truck.':'Done. Larry thinks you missed one.');return;}
     if(t.mode==='dozer'){
       blade=!blade;
       say(blade?'Blade down. Drive forward into the gravel.':'Blade raised.');
       return;
     }
-    if(state.bag>=capacity()){say('Full. Bring the load to the truck.');return;}
+    if(!room()){say(directFeed()?'The hopper is backed up.':'Full. Bring the load to the truck.');return;}
     const target=mounted()?machineTarget():handTarget();
     if(!target){say(t.eye?'Bring the front of the machine to the gravel.':'Move closer to the rock mountain.');return;}
     if(target.rock&&!state.rubble[target.rock.id]&&(!t.power||target.rock.type===2&&!t.boulder)){
@@ -404,7 +487,7 @@
   function performWork(target){
     const t=current(), {x,z,rock}=target;
     if(mounted()?Math.hypot(x-player.x,z-player.z)>t.reach+1.62:Math.hypot(x-player.x,z-player.z)>3.24)return;
-    const space=capacity()-state.bag;
+    const space=room();
     if(!space)return;
     let n=0;
     if(rock&&state.rubble[rock.id]){
@@ -426,7 +509,7 @@
       if(loose){
         state.rubble[rock.id]=loose;
         surface.puff(x,z,loose);
-        if(!t.eye&&(t.mode==='hammer'||t.mode==='jack')){
+        if(!directFeed()&&!t.eye&&(t.mode==='hammer'||t.mode==='jack')){
           say('Rock broken. Collect the rubble.');
           save();
           return;
@@ -439,7 +522,8 @@
     // Heavy equipment sweeps the surrounding gravel even when it catches a boulder.
     if(!n||t.eye)n+=surface.excavate(x,z,Math.min(space-n,B.rate(state,t)),t.eye?(t.mode==='dozer'?1.65:t.mode==='excavator'?1.22:.90):.70);
     if(!n){if(!t.hold&&t.mode!=='dozer')say('That patch is clear. Move along the pile.');return;}
-    state.bag+=n;
+    if(directFeed())feedBelt(n);
+    else state.bag+=n;
     const direction=facing(mounted()?state.vehicle.yaw:player.yaw).map(v=>v*(t.mode==='dozer'?1:-1));
     surface.puff(x,z,n,direction);
     if(state.bag>=capacity())say('Full. Take the load to the truck.');
@@ -452,61 +536,72 @@
     state.removed+=n;
     if((before<70&&state.removed>=70)||(before<220&&state.removed>=220))surface.changed();
   }
-  function finishDump(toBelt){
-    if(!state.bag)return;
-    if(toBelt?!nearHopper():!nearTruck())return;
-    const n=toBelt?Math.min(state.bag,B.BUFFER_MAX-state.buffer):state.bag;
-    if(!n)return;
-    state.bag-=n;
-    if(toBelt){
-      state.buffer+=n;state.factoryTick=Math.min(state.factoryTick,1);
-    }else deposit(n);
+  function feedBelt(amount){
+    if(!state.factory)return 0;
+    const n=Math.min(amount,B.BUFFER_MAX-state.buffer);
+    state.buffer+=n;
+    return n;
+  }
+  function finishDump(){
+    if(!state.bag||!nearTruck())return;
+    const n=state.bag;
+    state.bag=0;
+    deposit(n);
     if(current().mode==='dozer')blade=false;
-    const destination=toBelt?B.hopper:pad;
-    surface.puff(destination.x,destination.z,Math.min(n,32));
-    say(state.removed===TOTAL?'Done. Larry thinks you missed one.':
-      toBelt?num(n)+' rocks on the conveyor':'+'+num(n)+' rock credits');
+    surface.puff(pad.x,pad.z,Math.min(n,32));
+    say(state.removed===TOTAL?'Done. Larry thinks you missed one.':'+'+num(n)+' rock credits');
     updateUI();save();
   }
-  function autoHarvest(x,z,amount,reach,crush){
+  function harvestAt(x,z,amount,radius,crush){
     let remaining=Math.min(amount,yardLeft()), collected=0;
     if(remaining<=0)return 0;
     if(crush){
-      const rock=surface.geology.find(r=>state.rubble[r.id]&&Math.hypot(r.x-x,r.z-z)<=reach);
-      if(rock){
+      for(const rock of surface.geology){
+        if(!state.rubble[rock.id]||Math.hypot(rock.x-x,rock.z-z)>radius)continue;
         const n=Math.min(remaining,state.rubble[rock.id]);
         remaining-=n;collected+=n;state.rubble[rock.id]-=n;
         if(!state.rubble[rock.id])delete state.rubble[rock.id];
         surface.changed();
+        if(!remaining)break;
       }
     }
-    const target=surface.nearest(x,z,reach);
-    if(!target||!remaining)return collected;
-    const n=surface.excavate(target.x,target.z,remaining,reach>6?1.60:.9);
-    if(n&&state.factory>1)surface.puff(target.x,target.z,n,[1,0]);
-    return collected+n;
+    return collected+surface.excavate(x,z,remaining,radius);
+  }
+  function moveIntake(){
+    if(!started||state.factory<2||mounted()||shopOpen||phone.visible())return;
+    const target=handTarget();
+    if(!target){say('Aim at a reachable patch of gravel.');return;}
+    const {x,z}=target;
+    if(!close(target,B.intake,B.intakeTether)){say('The suction hose cannot reach this patch.');return;}
+    state.intakeFocus={x,z};
+    say('Powered collector moved to this patch.');
+    save();
   }
   function workYard(dt){
+    crew.tick(dt);
+    if(!state.factory)return;
     let changed=false;
-    for(let i=0;i<state.buddies.length;i++){
-      const buddy=B.buddies[i];
-      state.buddies[i]+=dt;
-      if(state.buddies[i]<buddy.time)continue;
-      state.buddies[i]-=buddy.time;
-      const n=autoHarvest(2.1,1.08,buddy.load,Infinity,true);
-      if(n){deposit(n);changed=true;}
+    if(nearHopper()&&unloadable()){
+      const sent=feedBelt(state.bag);
+      if(sent){
+        state.bag-=sent;changed=true;
+        surface.puff(B.hopper.x,B.hopper.z,Math.min(sent,12));
+      }
     }
-    if(state.factory){
-      state.factoryTick+=dt;
-      if(state.factoryTick>=4){
-        state.factoryTick-=4;
-        const boosted=state.factory===3;
-        const output=Math.min(state.buffer,boosted?3_600_000:1_200_000);
-        if(output){state.buffer-=output;deposit(output);changed=true;}
-        if(state.factory>=2){
-          const n=autoHarvest(B.intake.x,B.intake.z,Math.min(B.BUFFER_MAX-state.buffer,boosted?3_300_000:700_000),11,boosted);
-          state.buffer+=n;
-          changed||=n>0;
+    state.factoryTick+=dt;
+    if(state.factoryTick>=4){
+      state.factoryTick-=4;
+      const boosted=state.factory===3;
+      const output=Math.min(state.buffer,boosted?3_600_000:1_200_000);
+      if(output){state.buffer-=output;deposit(output);changed=true;}
+      if(state.factory>=2){
+        const focus=state.intakeFocus||B.defaultPickup;
+        const target=surface.nearest(focus.x,focus.z,B.pickupRadius)||(boosted&&
+          surface.geology.find(r=>state.rubble[r.id]&&close(r,focus,B.pickupRadius)));
+        if(target){
+          const n=harvestAt(target.x,target.z,Math.min(B.BUFFER_MAX-state.buffer,boosted?3_300_000:700_000),1.60,boosted);
+          state.buffer+=n;changed=changed||n>0;
+          if(n)surface.puff(target.x,target.z,n,[1,0]);
         }
       }
     }
@@ -517,13 +612,13 @@
       const age=clock-action.start;
       if(!action.done&&age>=action.at){
         action.done=true;
-        if(action.kind==='dump')finishDump(action.toBelt);
+        if(action.kind==='dump')finishDump();
         else performWork(action.target);
       }
       if(age>=action.end)action=null;
     }
-    if(!action&&!phone.visible()&&current().hold&&(workPointer!==null||heldKeys.has('e')||heldKeys.has(' '))&&!((nearTruck()||nearHopper())&&state.bag)){
-      if((!current().eye&&state.bag<capacity()&&handTarget())||(mounted()&&state.bag<capacity()&&machineTarget()))requestAction();
+    if(!action&&!phone.visible()&&current().hold&&(workPointer!==null||heldKeys.has('e')||heldKeys.has(' '))&&!(nearTruck()&&state.bag)){
+      if((!current().eye&&room()>0&&handTarget())||(mounted()&&state.bag<capacity()&&machineTarget()))requestAction();
     }
   }
 
@@ -605,13 +700,12 @@
   function context(){
     const t=current(), riding=mounted(), vehicle=t.eye;
     let h,a,b='';
-    if(!yardLeft()&&!state.bag&&!state.buffer){h='The yard is clear.';a='DONE';}
-    else if(!yardLeft()&&!state.bag&&state.buffer){h='Last load is on the conveyor';a='WAIT';}
+    if(state.removed===TOTAL){h='The yard is clear.';a='DONE';}
+    else if(!yardLeft()&&!state.bag&&(state.buffer||C.totalLoad(state))){h='The last loads are headed to the truck';a='WAIT';}
     else if(nearTruck()&&state.bag&&(!vehicle||riding)){h='Unload into the truck';a='UNLOAD';}
-    else if(nearHopper()&&state.bag&&(!vehicle||riding)){h='Feed the conveyor hopper';a='FEED';}
     else if(nearShed()){h='Tool shed · buy or swap equipment';a='TOOLS';}
     else if(vehicle&&!riding){h=nearVehicle()?'Enter '+t.n:'Find your machine on the delivery pad or where you parked it';a='ENTER';}
-    else if(state.bag>=capacity()){h='Load full · head to the truck';a=t.mode==='dozer'?(blade?'RAISE':'LOWER BLADE'):'FULL';}
+    else if(!directFeed()&&state.bag>=capacity()){h='Load full · head to the truck';a=t.mode==='dozer'?(blade?'RAISE':'LOWER BLADE'):'FULL';}
     else if(riding){
       if(t.mode==='dozer'){
         h=blade?(machineTarget()?'Drive forward into the rocks':lastRocksHint()||'Drive forward into the rocks'):'Lower the blade to push gravel';
@@ -629,8 +723,14 @@
         a=t.mode==='jack'?'DRILL':t.mode==='vac'?'VACUUM':'BREAK';
       }else{h=t.hold?'Hold to collect gravel':'Collect the gravel';a=t.mode==='jack'?'DRILL':t.mode==='vac'?'VACUUM':t.mode==='shovel'?'SCOOP':'COLLECT';}
     }
-    if(riding)b='EXIT';
+    if(directFeed()&&handTarget()){
+      h=room()?'Hopper in reach · rocks feed automatically':'Hopper backed up · keep holding to resume';
+      if(t.mode==='jack')a='DRILL';
+    }
+    if(riding)b=state.tier===C.DOZER&&crewDriver()>=0?'HAND OFF':'EXIT';
+    else if(nearCrewDozer())b=state.crewDozer.phase==='parked'?'TAKE OVER':'PARK DOZER';
     else if(vehicle&&nearVehicle()&&a!=='ENTER')b='ENTER';
+    $('#intakeBtn').hidden=state.factory<2||riding||!close(player,B.intake,B.intakeTether);
     if(h!==hint){$('#hint').textContent=h;hint=h;}
     if(a!==actionText){$('#act').textContent=a;actionText=a;}
     if(b!==mountText){
@@ -650,6 +750,7 @@
     shopTab=button.dataset.shop;$('#items').scrollTop=0;drawShop();
   };
   $('#mount').onclick=mount;
+  $('#intakeBtn').onclick=moveIntake;
   $('#act').onclick=e=>{
     if(!current().hold||e.detail===0)requestAction();
   };
@@ -723,6 +824,7 @@
     if(e.repeat)return;
     if(k==='e'||k===' ')requestAction();
     if(k==='f')mount();
+    if(k==='c')moveIntake();
   });
   window.addEventListener('keyup',e=>heldKeys.delete(e.key.toLowerCase()));
   window.addEventListener('blur',clearMovement);
@@ -754,7 +856,7 @@
       const clipAge=clock-larry.at;
       world.push(Rocks.larry.part(larry.clip,clipAge,worldPose(larry.x,0,larry.z,larry.yaw)));
     }
-    world.push(...B.factoryParts(state),...B.buddyParts(state));
+    world.push(...B.factoryParts(state,surface),...crew.parts(player));
     const pushing=rig&&action?.kind!=='work';
     const view=M.viewModel(pushing?(rig==='bin'?7:rig):state.tier,time,walk,fill,riding,dump,steering,blade);
     if(!t.eye&&state.carry===2&&action?.kind!=='work')view.push(...M.carryBucket(fill,dump,walk));

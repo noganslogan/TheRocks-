@@ -2,6 +2,7 @@
 
 Run: blender -b -t 2 --python art/build_larry.py -- /path/to/THRIVE's GLB
 Produces the animated source GLB and the browser renderer's compact skin data.
+Add --crew after the GLB path to bake the separate crew models and clips.
 """
 import array
 import base64
@@ -15,6 +16,9 @@ from mathutils import Matrix, Vector
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = Path(sys.argv[sys.argv.index("--") + 1])
+CREW = "--crew" in sys.argv
+if CREW:
+    print("Baking the THRIVE crew rig")
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=str(SOURCE))
 rig = next(o for o in bpy.context.scene.objects if o.type == "ARMATURE")
@@ -65,7 +69,7 @@ for mat in [skin, polo, khaki, shoe]:
 for v in body.data.vertices:
     x, y, z = body.matrix_world @ v.co
     # Stretch the original weighted waist forward and broaden the polo hem.
-    if abs(x) < .25 and .94 < z < 1.38:
+    if not CREW and abs(x) < .25 and .94 < z < 1.38:
         belly = max(0, 1-abs(z-1.10)/.28) * max(0, 1-abs(x)/.27)
         v.co.x *= 1 + .15 * belly
         if y < .045:
@@ -151,20 +155,21 @@ for i in range(12):
     panel([dome(a,False),dome(b,False),dome(b,True),dome(a,True)],gray if i in (0,1,10,11) else hair,"head")
     panel([dome(a,True),dome(b,True),(.055*math.cos(b),-.023+.070*math.sin(b),1.791),(.055*math.cos(a),-.023+.070*math.sin(a),1.791)],hair,"head")
 # Wristwatch on the left. The can moves with the right wrist.
-lh=rig.data.bones["hand.L"]
-rh=rig.data.bones["hand.R"]
-L=lh.head_local+(lh.tail_local-lh.head_local)*.10
-tube(L-(lh.tail_local-lh.head_local)*.05,L+(lh.tail_local-lh.head_local)*.09,.054,.054,black,lh.name)
-tube(L+Vector((0,-.045,.014)),L+Vector((0,-.068,.018)),.031,.030,metal,lh.name)
-tube(L+Vector((0,-.068,.018)),L+Vector((0,-.072,.019)),.023,.023,watchface,lh.name)
-C=rh.head_local+(rh.tail_local-rh.head_local)*.40+Vector((0,-.056,.007))
-a=C+Vector((-.019,0,-.053))
-b=C+Vector((.019,0,.052))
-tube(a,b,.033,.033,can,rh.name)
-tube(a,a.lerp(b,.07),.034,.034,metal,rh.name)
-tube(a.lerp(b,.40),a.lerp(b,.58),.0338,.0338,can_band,rh.name)
-tube(a.lerp(b,.91),b,.034,.034,metal,rh.name)
-block(tuple(b+Vector((0,0,.005))),(.024,.013,.008),black,rh.name)
+if not CREW:
+    lh=rig.data.bones["hand.L"]
+    rh=rig.data.bones["hand.R"]
+    L=lh.head_local+(lh.tail_local-lh.head_local)*.10
+    tube(L-(lh.tail_local-lh.head_local)*.05,L+(lh.tail_local-lh.head_local)*.09,.054,.054,black,lh.name)
+    tube(L+Vector((0,-.045,.014)),L+Vector((0,-.068,.018)),.031,.030,metal,lh.name)
+    tube(L+Vector((0,-.068,.018)),L+Vector((0,-.072,.019)),.023,.023,watchface,lh.name)
+    C=rh.head_local+(rh.tail_local-rh.head_local)*.40+Vector((0,-.056,.007))
+    a=C+Vector((-.019,0,-.053))
+    b=C+Vector((.019,0,.052))
+    tube(a,b,.033,.033,can,rh.name)
+    tube(a,a.lerp(b,.07),.034,.034,metal,rh.name)
+    tube(a.lerp(b,.40),a.lerp(b,.58),.0338,.0338,can_band,rh.name)
+    tube(a.lerp(b,.91),b,.034,.034,metal,rh.name)
+    block(tuple(b+Vector((0,0,.005))),(.024,.013,.008),black,rh.name)
 
 detail=bpy.data.meshes.new("Suburban clothing and accessories")
 detail.from_pydata(vertices,[],faces)
@@ -206,6 +211,9 @@ def blend(a,b,amount):
 
 clips={"stand":(3,True),"hips":(3.1,True),"drink":(4.3,False),"watch":(3.6,False),
        "walk":(1.08,True),"sit":(4.2,False),"inspect":(3.5,True),"talk":(2.2,True)}
+if CREW:
+    clips={"stand":(1.2,True),"walk":(1.06,True),"push":(1.06,True),
+           "scoop":(.96,True),"climb":(1.05,False),"drive":(1.42,True)}
 fps=15
 runtime={}
 
@@ -220,11 +228,18 @@ def pose(clip,p):
     settle=math.sin(math.pi*p)**2
     pelvis=rig.pose.bones["pelvis"]
     hip=.011*math.cos(q)
-    if clip=="walk":hip=.019*math.cos(2*q)-.023
+    if clip in {"walk","push"}:hip=.019*math.cos(2*q)-.023
     if clip=="sit":hip=-.414*min(1,p*5)
+    if clip=="drive":hip=-.295
+    if clip=="scoop":hip-=.13*settle
+    if clip=="climb":hip-=.24*settle
     pelvis.matrix=Matrix.Translation((0,.025 if clip=="sit" else 0,hip))@pelvis.matrix
     bpy.context.view_layer.update()
-    orient("spine",(.025*pulse,-.24 if clip=="inspect" else -.025,1))
+    lean=-.24 if clip=="inspect" else -.025
+    if clip=="scoop":lean=-.17-.63*settle
+    if clip=="push":lean=-.18
+    if clip=="climb":lean=-.31*settle
+    orient("spine",(.025*pulse,lean,1))
     if clip=="inspect":orient("head",(pulse*.15,-.72,.78))
     elif clip=="watch":orient("head",(settle*.21,-settle*.57,1))
     else:orient("head",(pulse*.07,-.08,1))
@@ -236,12 +251,32 @@ def pose(clip,p):
         shin="shin."+side
         rest_arm=(sign*.14,.055,-1)
         rest_fore=(sign*-.12,-.14,-1)
-        if clip=="walk":
+        if clip in {"walk","push"}:
             swing=pulse*sign
             orient(thigh,(sign*.08,-swing*.55,-1))
             orient(shin,(sign*.045,max(.04,-math.cos(q)*sign*.63),-1))
-            orient(upper,(sign*.18,swing*.37,-1))
-            orient(fore,(sign*-.08,swing*.25-.22,-1))
+            if clip=="push":
+                orient(upper,(sign*.19,-.56,-1))
+                toward(fore,(sign*.265,-.40,.81+.018*swing))
+            else:
+                orient(upper,(sign*.18,swing*.37,-1))
+                orient(fore,(sign*-.08,swing*.25-.22,-1))
+        elif clip=="drive":
+            orient(thigh,(sign*.16,-.89,-.19))
+            orient(shin,(sign*.11,-.17,-1))
+            orient(upper,(sign*.36,-.51,-1))
+            toward(fore,(sign*.26,-.49,1.03+.028*pulse*sign))
+        elif clip=="scoop":
+            orient(thigh,(sign*.18,-.18*settle,-1))
+            orient(shin,(sign*.07,.25*settle,-1))
+            orient(upper,(sign*.21,-.53-.25*settle,-1))
+            toward(fore,(sign*(.16+.12*settle),-.37-.16*settle,.99-.37*settle))
+        elif clip=="climb":
+            step=max(0,math.sin(math.pi*(p+(0 if side=="L" else .28))))
+            orient(thigh,(sign*.09,-.42*step,-1+step*.84))
+            orient(shin,(sign*.09,.51*step,-1))
+            orient(upper,(sign*.34,-.94,-.32))
+            toward(fore,(sign*.28,-.54,1.35+.24*step))
         elif clip=="sit":
             sit=min(1,p*5)
             orient(thigh,(sign*.11,-.98*sit,-1+sit*.92))
@@ -270,7 +305,7 @@ def pose(clip,p):
         arm=rig.pose.bones[fore]
         direction=(arm.tail-arm.head).normalized()
         orient(hand,direction)
-        if clip in {"walk","sit"}:
+        if clip in {"walk","sit","push","drive","scoop","climb"}:
             orient("foot."+side,(sign*.09,-1,-.33))
 
 rig.animation_data_create()
@@ -301,10 +336,12 @@ scene.frame_set(0)
 bpy.ops.object.select_all(action="DESELECT")
 for o in (rig,body,obj):o.select_set(True)
 bpy.context.view_layer.objects.active=rig
-bpy.ops.export_scene.gltf(filepath=str(ROOT/"art"/"Larry.glb"),export_format="GLB",use_selection=True,
-                          export_animations=True,export_animation_mode="ACTIONS",export_frame_range=False)
+if not CREW:
+    bpy.ops.export_scene.gltf(filepath=str(ROOT/"art"/"Larry.glb"),export_format="GLB",use_selection=True,
+                              export_animations=True,export_animation_mode="ACTIONS",export_frame_range=False)
 
-coords, indices, rgb, influences=[],[],[],[]
+coords, indices, rgb, influences, material_ids=[],[],[],[],[]
+material_names=list(colors)
 bone_ids={b.name:i for i,b in enumerate(bones)}
 for o in (body,obj):
     o.data.calc_loop_triangles()
@@ -318,12 +355,17 @@ for o in (body,obj):
     for tri in o.data.loop_triangles:
         ids=tuple(tri.vertices)
         indices.extend(offset+i for i in ids)
-        mat=colors[o.data.materials[o.data.polygons[tri.polygon_index].material_index].name]
+        name=o.data.materials[o.data.polygons[tri.polygon_index].material_index].name
+        mat=colors[name]
+        material_ids.append(material_names.index(name))
         normal=axis.to_3x3()@tri.normal
         shade=.76+.24*max(0,normal.dot(Vector((-.43,.86,.26))))
         rgb.extend(round(v*shade) for v in mat)
 data={"bones":len(bones),"coords":coords,"indices":indices,"rgb":rgb,"weights":influences,"clips":runtime}
-target=ROOT/"js"/"larry-data.js"
+if CREW:
+    data.update(materials=material_names,materialIds=material_ids)
+target=ROOT/"js"/("crew-data.js" if CREW else "larry-data.js")
+symbol="crewData" if CREW else "larryData"
 target.write_text("// Generated by art/build_larry.py from THRIVE's 22-bone humanoid.\n"
-                  "Rocks.larryData = "+json.dumps(data,separators=(",",":"))+";\n")
+                  "Rocks."+symbol+" = "+json.dumps(data,separators=(",",":"))+";\n")
 print(f"LARRY_ART: {len(bones)} bones, {len(coords)//3} vertices, {len(indices)//3} triangles, {len(clips)} clips")

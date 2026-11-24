@@ -1,11 +1,13 @@
 'use strict';
 
-Rocks.larry = (() => {
-  const {coords,indices,rgb,weights,clips,bones}=Rocks.larryData;
+Rocks.skin = (data,{colors={},width=1,height=1,head=1}={}) => {
+  const {coords,indices,rgb,weights,clips,bones,materials,materialIds}=data;
   const {setMesh,clamp}=Rocks.render;
   for(const clip of Object.values(clips)){
-    clip.bytes=new Uint8Array(atob(clip.matrices).split('').map(c=>c.charCodeAt(0)));
-    clip.frames=new DataView(clip.bytes.buffer);
+    if(clip.frames)continue;
+    const binary=atob(clip.matrices), bytes=new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+    clip.frames=new DataView(bytes.buffer);
     delete clip.matrices;
   }
   const stride=bones*12, matrices=new Float32Array(stride);
@@ -13,9 +15,11 @@ Rocks.larry = (() => {
   const item={};
   for(let i=0;i<indices.length;i++){
     const c=i-i%3, j=i*6;
-    vertices[j+3]=rgb[c]/255;
-    vertices[j+4]=rgb[c+1]/255;
-    vertices[j+5]=rgb[c+2]/255;
+    const color=materialIds&&colors[materials[materialIds[c/3]]];
+    const light=color?Math.max(rgb[c],rgb[c+1],rgb[c+2])/255*.26+.75:1;
+    vertices[j+3]=color?color[0]*light:rgb[c]/255;
+    vertices[j+4]=color?color[1]*light:rgb[c+1]/255;
+    vertices[j+5]=color?color[2]*light:rgb[c+2]/255;
   }
   let clipBefore=null, phaseBefore=-1;
   function part(name,time,m){
@@ -43,11 +47,16 @@ Rocks.larry = (() => {
       }
       for(let i=0;i<indices.length;i++){
         const p=indices[i]*3, v=i*6;
-        vertices[v]=positions[p];vertices[v+1]=positions[p+1];vertices[v+2]=positions[p+2];
+        const shape=coords[p+1]>1.485?head:width;
+      vertices[v]=positions[p]*shape;
+      vertices[v+1]=positions[p+1]*height;
+      vertices[v+2]=positions[p+2];
       }
       setMesh(item,vertices,true);
     }
     return {item,m};
   }
   return {part};
-})();
+};
+
+Rocks.larry = Rocks.skin(Rocks.larryData);

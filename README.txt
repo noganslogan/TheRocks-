@@ -1,4 +1,4 @@
-THE ROCKS. v0.4
+THE ROCKS. v0.5
 
 Your wife volunteered you to remove one billion rocks from Larry's yard. Pick
 them up, haul them to the truck, and spend the rock credits in the shed. The
@@ -21,15 +21,20 @@ much you can haul on foot. First spend one rock on Pockets at the shed, under
 Carry. Upgrades improve gather speed, gather amount and running speed.
 The phone opens for texts every five active game minutes and calls every thirty.
 Reply or answer to stop repeat notifications. Open Buddies in the phone to
-hire a helper who will collect and deliver rocks during play.
+hire a helper who collects and delivers rocks during play. Tap a buddy's name
+to assign work or buy Pace, Handling or Machine training. At Bulldozer rank,
+choose Assign bulldozer. While driving it, use Hand off (F) to let that buddy
+take the controls. To get it back, walk up, ask them to park, then Take over.
 
 Purchase and swap equipment at the shed. Vehicles arrive on the concrete pad
 beside it. Park the vehicle with F or Exit. Vehicle cargo stays with the parked
 machine and must be unloaded before trading it out. Lower the bulldozer's
 blade and drive forward into the pile to collect. Bring the load to the marked
 area behind the pickup and use Unload. After buying the conveyor under
-Factory, you can also feed the hopper beside the belt. The powered collector
-feeds it automatically and the crusher processes rubble and speeds up the line.
+Factory, you can also feed the hopper beside the belt. Carried loads enter as soon as you reach the hopper. Hold the jackhammer
+within range to send new rubble onto the belt. The powered collector works
+a local patch. Aim at gravel and press C or tap Set intake to move its pickup
+head within hose reach. The crusher processes rubble and speeds up the line.
 
 CLOUDFLARE
 
@@ -42,7 +47,7 @@ SAVES AND RENDERING
 
 The game migrates original saves in place. Delivered rocks, credits, owned
 gear and carried material retain their values. New saves also record depleted
-pile cells, fractured rubble, active vehicle, carry gear, phone and factory. One rock deposited earns
+pile cells, fractured rubble, active vehicle, carry gear, phone, crew assignments, active crew loads and factory. One rock deposited earns
 one credit. WebGL uses hardware instancing where available. Canvas fallback
 uses fewer surface rocks and simpler sorting and lighting.
 

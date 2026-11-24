@@ -1,3 +1,20 @@
+# THE ROCKS. v0.5
+
+- Added automatic hopper intake for carried loads and held-tool work beside
+  the belt. A held jackhammer resumes feeding when a backed-up hopper drains.
+- Buddies now walk through the yard, scoop from the rock pile, carry a load
+  and deposit at the truck or conveyor. They use THRIVE's 22-bone humanoid
+  with walking, pushing, digging, cab-entry and driving animations.
+- Added individual Pace, Handling and Machine training upgrades. Assign a
+  trained buddy to the bulldozer, hop out to hand it over, then park and take
+  it back when needed. Cargo stays with the bulldozer through either transfer.
+- Added live worker statuses, a conveyor queue readout and a movable powered
+  collection head. Crew jobs, cargo and the pickup position survive reloads.
+
+The release suite simulates a full bulldozer shift in the yard, another buddy
+hauling in parallel, handoff and reclaim with saved cargo, the movable pickup,
+and uninterrupted jackhammer feed with hopper backpressure.
+
 # THE ROCKS. v0.4
 
 - Split scoop size from carrying capacity. Start with one rock in your hand,
