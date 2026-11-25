@@ -1,7 +1,7 @@
 'use strict';
 
 Rocks.phone = function({getState,save,interrupt,hired,setJob,upgrade}){
-  const B=Rocks.backyard, C=Rocks.crew;
+  const B=Rocks.backyard, C=Rocks.crew, W=Rocks.wife;
   const $=selector=>document.querySelector(selector), button=$('#phoneToggle'), panel=$('#phoneOverlay');
   const thread=$('#phoneThread'), title=$('#phoneTitle'), meta=$('#phoneMeta'), footer=$('#phoneActions');
   let visible=false, tab='texts', audio=null, serial=-1, selected=null;
@@ -50,7 +50,6 @@ Rocks.phone = function({getState,save,interrupt,hired,setJob,upgrade}){
     node.textContent=text;
     return node;
   }
-  const replyLines=['On it.','Still here. Still rocks.','I’ll grab it on the way home.'];
   function controls(actions){
     footer.replaceChildren();
     for(const [label,className,fn,disabled=false] of actions){
@@ -60,24 +59,17 @@ Rocks.phone = function({getState,save,interrupt,hired,setJob,upgrade}){
       footer.append(control);
     }
   }
-  function respond(text){
-    const p=getState().phone;
-    B.record(p,'me',text);
-    p.unread=false;p.notify=0;p.nextNag=p.ring?p.time+18:0;
-    save();render();
+  function respond(call,index){
+    if(W.respond(getState(),call,index)){save();render();}
   }
   function answer(){
-    const p=getState().phone;
-    p.ring=false;p.active=true;p.callAge=0;p.notify=0;
-    B.record(p,'log','Answered call');
-    p.callIndex++;
-    save();render();
+    W.answer(getState());save();render();
   }
   function hangup(){
-    const p=getState().phone;
-    p.active=false;p.ring=false;p.nextNag=p.unread?p.time+32:0;
-    B.record(p,'log','Call ended');
-    save();render();
+    W.hangup(getState().phone);save();render();
+  }
+  function replyOptions(p,call){
+    return W.choices(p,call).map((choice,i)=>[choice.text,'reply',()=>respond(call,i)]);
   }
   function timeLabel(n){
     return Math.floor(n/60)+':'+String(Math.floor(n)%60).padStart(2,'0');
@@ -147,19 +139,25 @@ Rocks.phone = function({getState,save,interrupt,hired,setJob,upgrade}){
     thread.replaceChildren();
     if(isCall){
       serial=Math.floor(p.callAge);
-      thread.append(textNode('call-card',p.active?B.calls[(p.callIndex-1)%B.calls.length]:'Your wife is calling.'));
-      controls(p.active?[['End call','decline',hangup]]:[['Answer','answer',answer],['Put away','quiet',close]]);
+      if(p.active){
+        for(const [who,line] of p.callChat)thread.append(textNode('bubble '+who,line));
+        thread.scrollTop=thread.scrollHeight;
+        controls([...replyOptions(p,true),['End call','decline',hangup]]);
+      }else{
+        thread.append(textNode('call-card','Your wife is calling.'));
+        controls([['Answer','answer',answer],['Put away','quiet',close]]);
+      }
     }else if(tab==='buddies'){
       drawCrew(state);
     }else{
       for(const [who,text] of p.chat)thread.append(textNode('bubble '+who,text));
       if(!p.chat.length)thread.append(textNode('call-card','No messages yet.'));
       thread.scrollTop=thread.scrollHeight;
-      controls(p.unread?replyLines.map(text=>[text,'reply',()=>respond(text)]):[['Put away','quiet',close]]);
+      controls(p.unread?replyOptions(p,false):[['Put away','quiet',close]]);
     }
   }
   function tick(dt){
-    const p=getState().phone, event=B.timetable(p,dt);
+    const state=getState(),p=state.phone,event=W.tick(state,dt);
     if(event==='ended'){
       render();save();
     }else if(event){

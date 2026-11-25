@@ -49,3 +49,9 @@
 
 #techStatus{margin-top:5px;font-weight:800;color:#f6c594}
 #gantryBtn{pointer-events:auto;min-height:40px;padding:0 8px;max-width:134px;font-size:9px;font-weight:850;line-height:1.15;background:#343650;color:#e1def4}
+
+#droneBtn{pointer-events:auto;min-height:39px;padding:0 8px;max-width:134px;font-size:9px;font-weight:850;line-height:1.15;background:#30483f;color:#d5ebdd}
+#phoneOverlay.call #phoneThread:has(.bubble){display:block}
+#phoneActions:has(.reply){display:grid;grid-template-columns:1fr}
+#phoneActions:has(.reply) button{min-height:32px;text-align:left;padding:4px 8px}
+#phoneActions:has(.reply) button.decline{text-align:center;min-height:28px}

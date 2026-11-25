@@ -1,4 +1,4 @@
-THE ROCKS. v0.6
+THE ROCKS. v0.7
 
 Your wife volunteered you to remove one billion rocks from Larry's yard. Pick
 them up, haul them to the truck, and spend the rock credits in the shed. The
@@ -20,7 +20,8 @@ Tools determine how much a grab or scoop picks up. Carry gear determines how
 much you can haul on foot. First spend one rock on Pockets at the shed, under
 Carry. Upgrades improve gather speed, gather amount and running speed.
 The phone opens for texts every five active game minutes and calls every thirty.
-Reply or answer to stop repeat notifications. Open Buddies in the phone to
+Choose a reply on texts and calls. Your answers can open follow-up questions
+and change later calls, reminders and plans. Open Buddies in the phone to
 hire a helper who collects and delivers rocks during play. Tap a buddy's name
 to assign work or buy Pace, Handling or Machine training. At Bulldozer rank,
 choose Assign bulldozer. While driving it, use Hand off (F) to let that buddy
@@ -39,13 +40,19 @@ head within hose reach. The crusher processes rubble and speeds up the line.
 
 FUTURISTIC EQUIPMENT
 
-Open the Tech tab at the shed. Aim and hold the Laser Excavator to feed the
-bundled high-speed conveyor, or use the Matter Disintegrator for immediate
-credits. Gravity Sweep Drones move existing stock to the sweep pad on the
-front side of the pile. The Gantry button (G) cycles Biggest pile, Cleanup,
-and Paused. With the Orbital Yard Service equipped, use Ask Larry while
-standing near Larry. Then aim at the pile and use Mark area to start a pass.
-Your marked pass runs in the background and can resume after a reload.
+Open the Tech tab at the shed. Each purchase includes a ready charge. The
+Laser Excavator fires at 2.6M/sec for 20 seconds and includes the high-speed
+conveyor. The Matter Disintegrator pays directly at 5M/sec for 30 seconds.
+Launch the Gravity Sweep Drones with V for a 40-second sweep. Start the
+gantry with G for 60 seconds at 500,000/sec. Press G during the streak to
+cycle Biggest pile, Cleanup, and Paused. Get Larry's permit and mark a section
+to use the orbital beam at 12M/sec for eight seconds.
+
+The clock runs during active play once a charge starts, including while the
+phone is up or the weapon is idle. You can spend the shared streak reserve
+on another charge. Earn it by delivering your own loads or feeding the hopper
+with ordinary equipment. Credits pay for purchases. Only your own conventional
+deliveries fill the reserve, which holds up to 60 million rocks.
 
 CLOUDFLARE
 

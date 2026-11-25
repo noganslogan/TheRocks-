@@ -41,7 +41,7 @@ function start({saved=null,software=true,instanced=false}={}){
     localStorage:{getItem:()=>snapshot,setItem(key,value){snapshot=value;writes++;}}
   };
   vm.createContext(env);
-  for(const file of ['render','models','larry-data','crew-data','larry-rig','yard','backyard','crew','phone','future','game']){
+  for(const file of ['render','models','larry-data','crew-data','larry-rig','yard','backyard','crew','wife','phone','future','game']){
     let code=fs.readFileSync(path.join(root,'js',file+'.js'),'utf8');
     if(file==='game'){
       const marker='  updateUI();\n  requestAnimationFrame(frame);';
@@ -83,6 +83,8 @@ function evidence(g){
   const s=g.state;
   assert.equal(s.depleted.reduce((a,b)=>a+b,0),s.removed+s.bag+s.buffer+s.buddies.reduce((a,b)=>a+b.load,0)+(s.crewDozer?.load||0)+Object.values(s.rubble).reduce((a,b)=>a+b,0));
   assert.ok(s.credits>=0&&s.credits<=s.removed);
+  assert.ok(s.tech.manualQueued>=0&&s.tech.manualQueued<=s.buffer);
+  assert.ok(s.tech.reserve>=0&&s.tech.reserve<=60_000_000);
   assert.ok(s.bag<=g.capacity());
   assert.ok(s.removed+s.bag+s.buffer<=total);
 }
@@ -418,8 +420,11 @@ test('wife texts, escalates after dismissal, and stops when answered',()=>{
   h.steps(583);
   assert.ok(g.phone.visible());
   assert.equal(p.chat.at(-1)[1],'Hello…?');
-  phoneChoice(h,'Still here. Still rocks.');
-  assert.equal(p.chat.at(-1)[0],'me');
+  phoneChoice(h,'There are a billion rocks.');
+  assert.ok(p.chat.some(([who,text])=>who==='wife'&&text.includes('A BILLION?')));
+  assert.ok(p.unread,'replying opened a follow-up question');
+  phoneChoice(h,'He’s sitting in a lawn chair.');
+  assert.match(p.chat.at(-1)[1],/supervising/);
   assert.ok(!p.unread);
   const after=p.chat.length;
   h.steps(650);
@@ -438,11 +443,17 @@ test('wife texts, escalates after dismissal, and stops when answered',()=>{
   phoneChoice(saved,'Answer');
   assert.ok(saved.game.state.phone.active&&!saved.game.state.phone.ring);
   assert.match(saved.node('#phoneThread').children[0].textContent,/going to take like an hour/);
-  saved.steps(390);
+  phoneChoice(saved,'Can we talk while I take a break?');
+  assert.match(saved.game.state.phone.callChat.at(-1)[1],/How are you doing/);
+  phoneChoice(saved,'I could use a break.');
+  assert.match(saved.game.state.phone.callChat.at(-1)[1],/yard will still be there/);
+  saved.steps(133);
   assert.ok(!saved.game.state.phone.active);
   assert.equal(saved.game.state.phone.chat.at(-1)[1],'Call ended');
   assert.ok(saved.game.state.phone.unread,'there is still a text to reply to');
-  phoneChoice(saved,'On it.');
+  phoneChoice(saved,'Which collagen mask?');
+  phoneChoice(saved,'Send me the brand and I’ll match it.');
+  assert.equal(saved.game.state.phone.plan.groceries,'you');
   assert.ok(!saved.game.state.phone.unread);
 });
 
@@ -658,6 +669,7 @@ test('landscape touch laser cuts directly into the hopper and the high-speed bel
   assert.equal(g.state.buffer,0);
   assert.equal(g.state.removed,403_900_000,'the installed conveyor processes more than the base belt per tick');
   assert.equal(g.state.credits,103_900_000);
+  assert.equal(g.state.tech.reserve,0,'laser output never earns recharge when the belt pays out');
   evidence(g);
 });
 
@@ -666,12 +678,12 @@ test('disintegrator pays at impact with a full carrier and stops on release',()=
   setPlayer(g,-.8,4.6);
   aimAt(g,-4.1,-1.7);
   h.key('keydown','e');h.steps(40,.05);h.key('keyup','e');
-  assert.equal(g.state.removed,424_000_000);
-  assert.equal(g.state.credits,84_000_000);
+  assert.equal(g.state.removed,430_000_000);
+  assert.equal(g.state.credits,90_000_000);
   assert.equal(g.state.bag,1,'old cargo stays in the carrier');
   assert.equal(g.state.buffer,0);
   h.steps(40,.05);
-  assert.equal(g.state.removed,424_000_000);
+  assert.equal(g.state.removed,430_000_000);
   evidence(g);
 });
 
@@ -680,6 +692,7 @@ test('gravity drones consolidate actual field stock and do not mint credits',()=
   const Y=vm.runInContext('Rocks.yard',h.env);
   const area=Y.cells.filter(c=>Math.hypot(c.x-.06,c.z-.91)<=1.65);
   const before=area.reduce((n,c)=>n+g.surface.available(c.id),0);
+  h.event('#droneBtn','click');
   h.steps(20,.05);
   const after=area.reduce((n,c)=>n+g.surface.available(c.id),0);
   assert.ok(after>before);
@@ -701,6 +714,9 @@ test('gantry can pause or switch modes and cleans up the last isolated cells and
   g.state.hits[rock.id]=rock.req;
   g.state.rubble[rock.id]=100;
   evidence(g);
+  h.steps(20,.05);
+  assert.equal(g.state.removed,total-1000,'legacy installations wait for deliberate activation');
+  h.event('#gantryBtn','click');
   h.event('#gantryBtn','click');
   assert.equal(g.state.tech.mode,1);
   h.event('#gantryBtn','click');
@@ -737,13 +753,128 @@ test('Larry authorizes the orbital pass, which resumes from a save at 12 million
   evidence(g2);
 });
 
-test('orbital service and the gantry can clear 500 million rocks in under one minute',()=>{
+test('one orbital pass and one gantry streak are bounded with plenty of rock left',()=>{
   const h=start({saved:JSON.stringify({version:6,removed:500_000_000,credits:50_000_000,
     owned:[0,18],tier:18,tech:{gantry:true,permit:true,mark:{x:-4.4,z:-2.4}}})}),g=h.game;
-  let steps=0;
-  while(g.state.removed<total&&steps<1200){h.steps(1,.05);steps++;}
-  assert.equal(g.state.removed,total);
-  assert.ok(steps*.05<60);
-  console.log('  Gantry + orbital completed the last 500 million in', (steps*.05).toFixed(2), 'seconds');
+  h.event('#gantryBtn','click');
+  h.steps(1400,.05);
+  assert.equal(g.state.removed,626_000_000);
+  assert.equal(g.state.credits,176_000_000);
+  assert.equal(g.state.tech.charges.gantry,0);
+  assert.equal(g.state.tech.charges.orbital,0);
+  assert.equal(g.state.tech.mark,null);
+  assert.equal(g.state.tech.reserve,0,'automation cannot recharge itself');
+  h.event('#gantryBtn','click');
+  assert.equal(g.state.tech.charges.gantry,0);
+  evidence(g);
+});
+
+test('a spent trigger cannot automatically buy another disintegrator burst',()=>{
+  const h=start({saved:JSON.stringify({version:7,removed:420_000_000,credits:80_000_000,owned:[0,17],tier:17,
+    tech:{reserve:60_000_000,charges:{matter:.25}}})}),g=h.game;
+  setPlayer(g,-.8,4.6);aimAt(g,-4.1,-1.7);
+  h.key('keydown','e');h.steps(40,.05);
+  assert.equal(g.state.removed,421_250_000);
+  assert.equal(g.state.tech.charges.matter,0);
+  assert.equal(g.state.tech.reserve,60_000_000);
+  h.key('keyup','e');h.steps(1,.05);
+  h.key('keydown','e');h.steps(10,.05);h.key('keyup','e');
+  assert.equal(g.state.tech.reserve,24_000_000);
+  assert.equal(g.state.tech.charges.matter,29.5);
+  assert.equal(g.state.removed,423_750_000);
+  const h2=start({saved:h.snapshot()});
+  assert.equal(h2.game.state.tech.charges.matter,29.5);
+  h2.steps(600,.05);
+  assert.equal(h2.game.state.tech.charges.matter,0,'the active charge expires with the trigger released');
+  assert.equal(h2.game.state.removed,423_750_000);
+  evidence(h2.game);
+});
+
+test('your direct loads and conveyor feed refill the shared reserve, while passive stock does not',()=>{
+  const fixture={version:7,removed:400_000_000,credits:40_000_000,bag:12_000_000,
+    owned:[0,15,16,17],tier:15,factory:1,buffer:2_000_000,
+    vehicle:{x:10.8,z:-2.6,yaw:0,mounted:true},tech:{charges:{matter:0,laser:-1}}};
+  const h=start({saved:JSON.stringify(fixture)}),g=h.game;
+  g.requestAction();h.steps(30,.05);
+  assert.equal(g.state.tech.reserve,12_000_000);
+  assert.equal(g.state.bag,0);
+  const B=vm.runInContext('Rocks.backyard',h.env),Y=vm.runInContext('Rocks.yard',h.env);
+  g.state.bag=12_000_000;
+  g.state.depleted=Y.spread(g.state.removed+g.state.bag+g.state.buffer);
+  setPlayer(g,B.hopper.x,B.hopper.z+2);
+  h.steps(1,.05);
+  assert.equal(g.state.tech.manualQueued,12_000_000);
+  assert.equal(g.state.tech.reserve,12_000_000,'the belt must deliver before the charge earns');
+  h.steps(90,.05);
+  assert.equal(g.state.buffer,0);
+  assert.equal(g.state.tech.manualQueued,0);
+  assert.equal(g.state.tech.reserve,24_000_000,'only the 12M delivered hands-on counted');
+  evidence(g);
+});
+
+test('a grocery choice survives reload and changes the next call',()=>{
+  let h=start(),g=h.game,p=g.state.phone;
+  p.time=299.97;h.steps(1);
+  phoneChoice(h,'Could you come help?');
+  phoneChoice(h,'Bring the big bottle, please.');
+  h.event('#phoneClose','click');
+  p.time=p.nextText-.025;h.steps(1);
+  phoneChoice(h,'Can you get groceries? I’m going to be a while.');
+  h.pagehide();
+  h=start({saved:h.snapshot()});g=h.game;p=g.state.phone;
+  h.event('#phoneToggle','click');
+  phoneChoice(h,'I can grab bread.');
+  assert.equal(p.plan.groceries,'bread');
+  assert.equal(p.plan.water,'bring');
+  h.event('#phoneClose','click');
+  p.time=p.nextCall-.025;h.steps(1);
+  phoneChoice(h,'Answer');
+  assert.match(p.callChat[0][1],/still grabbing the bread/);
+  phoneChoice(h,'Can we change the plan? I’m still in the yard.');
+  assert.equal(p.plan.groceries,'wife');
+  assert.match(p.callChat.at(-1)[1],/rocks/);
+  h.pagehide();
+  const reloaded=start({saved:h.snapshot()});
+  phoneChoice(reloaded,'Answer');
+  assert.equal(reloaded.game.state.phone.callNode,'progress');
+  phoneChoice(reloaded,'I need a break more than an estimate.');
+  assert.match(reloaded.game.state.phone.callChat.at(-1)[1],/Take one/);
+});
+
+test('a ten-minute promise gets a callback and the final text remembers grocery plans',()=>{
+  const h=start(),g=h.game,p=g.state.phone;
+  p.time=299.97;h.steps(1);
+  phoneChoice(h,'Give me ten minutes.');
+  phoneChoice(h,'Actual minutes. I’ll text when I’m done.');
+  h.event('#phoneClose','click');
+  const when=p.followAt;
+  p.time=when-.02;p.nextText=when+50;
+  h.steps(1);
+  assert.equal(p.textNode,'callback');
+  phoneChoice(h,'I underestimated it. Eat without me.');
+  assert.match(p.chat.at(-1)[1],/save you a plate/);
+  p.plan.groceries='you';g.state.removed=total;
+  h.steps(1);
+  assert.equal(p.textNode,'finish');
+  assert.match(p.chat.at(-1)[1],/list still stands/);
+  phoneChoice(h,'Coming home.');
+  assert.equal(p.finished,true);
+});
+
+test('a full Disintegrator charge runs at 5M per second for 30 seconds and caps at 150M',()=>{
+  const h=start({saved:JSON.stringify({version:7,removed:400_000_000,credits:30_000_000,
+    owned:[0,17],tier:17,tech:{charges:{matter:-1}}})}),g=h.game;
+  const Y=vm.runInContext('Rocks.yard',h.env);
+  setPlayer(g,-.8,4.6);aimAt(g,-4.1,-1.7);
+  h.key('keydown','e');
+  for(let pulse=0;pulse<129;pulse++){
+    const cell=Y.cells.reduce((big,c)=>g.surface.available(c.id)>g.surface.available(big.id)?c:big);
+    aimAt(g,cell.x,cell.z);
+    h.steps(5,.05);
+  }
+  h.key('keyup','e');
+  assert.equal(g.state.removed,550_000_000);
+  assert.equal(g.state.tech.charges.matter,0);
+  assert.equal(g.state.tech.reserve,0);
   evidence(g);
 });

@@ -4,31 +4,68 @@ Rocks.future = (() => {
   const R=Rocks.render, Y=Rocks.yard, B=Rocks.backyard;
   const {TAU,build,mesh,box,rod,cylinder,stone,transform,mix,clamp,palette}=R;
   const LASER=16, MATTER=17, ORBITAL=18;
-  const rates={laser:2_600_000,matter:2_000_000,gantry:6_000_000,orbital:12_000_000};
+  const rates={laser:2_600_000,matter:5_000_000,gantry:500_000,orbital:12_000_000};
+  const limits={
+    laser:{seconds:20,recharge:12_000_000},
+    matter:{seconds:30,recharge:36_000_000},
+    drones:{seconds:40,recharge:8_000_000},
+    gantry:{seconds:60,recharge:18_000_000},
+    orbital:{seconds:8,recharge:60_000_000}
+  };
+  const reserveCap=60_000_000;
   const beltBatch=14_000_000;
   const modes=['Biggest pile','Cleanup','Paused'];
   const upgrades=[
-    {name:'Laser Excavator',cost:25_000_000,tier:LASER,detail:'2.6M rocks/sec into the hopper',desc:'Slice slabs off the pile. Includes the high-speed conveyor.'},
-    {name:'Matter Disintegrator',cost:60_000_000,tier:MATTER,detail:'2M rocks/sec directly to credits',desc:'Hold the beam on gravel or boulders to vaporize them.'},
-    {name:'Gravity Sweep Drones',cost:35_000_000,key:'drones',detail:'Consolidate scattered rocks',desc:'Three drones move loose pockets onto the sweep pad near the front of the pile.'},
-    {name:'Autonomous Laser Gantry',cost:110_000_000,key:'gantry',detail:'6M rocks/sec and automatic cleanup',desc:'Runs in the background. Switch between Biggest pile, Cleanup, and Paused.'},
-    {name:'Orbital Yard Service',cost:150_000_000,tier:ORBITAL,detail:'12M rocks/sec inside the marked section',desc:'Ask Larry to sign the permit, then mark a section from anywhere in the yard.'}
+    {name:'Laser Excavator',cost:25_000_000,tier:LASER,kind:'laser',detail:'2.6M/sec into the hopper',desc:'Slice slabs off the pile. Includes the high-speed conveyor.'},
+    {name:'Matter Disintegrator',cost:60_000_000,tier:MATTER,kind:'matter',detail:'5M/sec directly to credits',desc:'Hold the beam on gravel or boulders to vaporize them.'},
+    {name:'Gravity Sweep Drones',cost:35_000_000,key:'drones',kind:'drones',detail:'Consolidate scattered rocks',desc:'Three drones move loose pockets onto the sweep pad near the front of the pile.'},
+    {name:'Autonomous Laser Gantry',cost:110_000_000,key:'gantry',kind:'gantry',detail:'500,000/sec with automatic cleanup',desc:'Runs in the background. Switch between Biggest pile, Cleanup, and Paused.'},
+    {name:'Orbital Yard Service',cost:150_000_000,tier:ORBITAL,kind:'orbital',detail:'12M/sec inside the marked section',desc:'Ask Larry to sign the permit, then mark a section from anywhere in the yard.'}
   ];
   const sweep={x:.06,z:.91}, radius=1.65, orbitalRadius=5.25, interval=.25;
-  const fresh=()=>({drones:false,gantry:false,mode:0,permit:false,mark:null});
+  const fresh=()=>({drones:false,gantry:false,mode:0,permit:false,mark:null,reserve:0,manualQueued:0,
+    charges:{laser:0,matter:0,drones:0,gantry:0,orbital:0}});
+  const owns=(s,u)=>u.tier?s.owned.includes(u.tier):s.tech[u.key];
+  const hasTech=s=>upgrades.some(u=>owns(s,u));
+  const whole=(v,max)=>Number.isFinite(v)?clamp(Math.trunc(v),0,max):0;
   function restore(s,raw){
-    const t=raw.tech;
-    if(!t||typeof t!=='object')return;
-    s.tech.drones=t.drones===true;
-    s.tech.gantry=t.gantry===true;
-    s.tech.mode=Number.isInteger(t.mode)&&t.mode>=0&&t.mode<modes.length?t.mode:0;
-    s.tech.permit=s.owned.includes(ORBITAL)&&t.permit===true;
-    if(s.tech.permit&&Number.isFinite(t.mark?.x)&&Number.isFinite(t.mark?.z)&&
-      Math.abs(t.mark.x-Y.pile.x)<=Y.pile.rx&&Math.abs(t.mark.z-Y.pile.z)<=Y.pile.rz){
-      s.tech.mark={x:t.mark.x,z:t.mark.z};
+    const old=raw.tech||{}, t=s.tech;
+    t.drones=old.drones===true;t.gantry=old.gantry===true;
+    t.mode=Number.isInteger(old.mode)&&old.mode>=0&&old.mode<modes.length?old.mode:0;
+    t.permit=s.owned.includes(ORBITAL)&&old.permit===true;
+    t.reserve=whole(old.reserve,reserveCap);
+    t.manualQueued=whole(old.manualQueued,s.buffer);
+    for(const u of upgrades){
+      if(!owns(s,u))continue;
+      const saved=old.charges?.[u.kind];
+      t.charges[u.kind]=Number.isFinite(saved)?clamp(saved,-1,limits[u.kind].seconds):-1;
+    }
+    if(t.permit&&Number.isFinite(old.mark?.x)&&Number.isFinite(old.mark?.z)&&
+      Math.abs(old.mark.x-Y.pile.x)<=Y.pile.rx&&Math.abs(old.mark.z-Y.pile.z)<=Y.pile.rz){
+      if(!(raw.version>=7))t.charges.orbital=limits.orbital.seconds;
+      if(t.charges.orbital>0)t.mark={x:old.mark.x,z:old.mark.z};
     }
   }
-
+  function earn(s,n){
+    if(n>0&&hasTech(s))s.tech.reserve=Math.min(reserveCap,s.tech.reserve+n);
+  }
+  function activate(s,kind){
+    const existing=s.tech.charges[kind], cost=limits[kind].recharge;
+    if(existing>0)return true;
+    if(existing===0){
+      if(s.tech.reserve<cost)return false;
+      s.tech.reserve-=cost;
+    }
+    s.tech.charges[kind]=limits[kind].seconds;
+    return true;
+  }
+  function label(s,kind){
+    const value=s.tech.charges[kind];
+    if(value>0)return Math.ceil(value)+'s';
+    if(value<0)return 'READY';
+    if(s.tech.reserve>=limits[kind].recharge)return 'REARM';
+    return 'NEEDS '+(limits[kind].recharge/1_000_000)+'M';
+  }
   const part=fn=>mesh(build(fn));
   const tools3d={
     laser:part(()=>{
@@ -149,9 +186,9 @@ Rocks.future = (() => {
   const sqDist=(a,b)=>(a.x-b.x)**2+(a.z-b.z)**2;
   function create({getState,surface,left,harvest,feed,deposit,refresh,say}){
     let timer=0, hand=null, handAge=10, gantryHit=null, orbitalHit=null, droneTrip=null;
-    let trolleyX=Y.pile.x, elapsed=0;
+    let trolleyX=Y.pile.x,elapsed=0,heldMode=null,spentTrigger=false;
     function clear(){
-      timer=0; elapsed=0; handAge=10;
+      timer=0;elapsed=0;handAge=10;heldMode=null;spentTrigger=false;
       hand=gantryHit=orbitalHit=droneTrip=null;
       trolleyX=Y.pile.x;
     }
@@ -245,51 +282,69 @@ Rocks.future = (() => {
       return moved>0;
     }
     function tick(dt,player,mode,firing){
-      const s=getState();
-      elapsed+=dt; handAge+=dt;
-      if(!firing)hand=null;
-      if(s.tech.gantry&&s.tech.mode!==2&&gantryHit){
+      const s=getState(), t=s.tech;
+      elapsed+=dt;handAge+=dt;
+      const handMode=firing&&(mode==='laser'||mode==='matter')?mode:null;
+      if(handMode!==heldMode){
+        heldMode=handMode;
+        spentTrigger=false;
+        if(!handMode)hand=null;
+      }
+      if(t.charges.gantry>0&&t.mode!==2&&gantryHit){
         trolleyX=mix(trolleyX,gantryHit.x,Math.min(1,dt*4.8));
       }
-      if(!s.tech.gantry&&!s.tech.drones&&!s.tech.mark&&!(mode&&firing)){
+      if(!handMode&&!Object.values(t.charges).some(n=>n>0)){
         timer=0;return;
       }
       timer+=dt;
       if(timer<interval-1e-7)return;
       timer=Math.max(0,timer-interval);
       let changed=false;
-      if(firing&&(mode==='laser'||mode==='matter')){
+      const budget=kind=>Math.floor(rates[kind]*Math.min(interval,Math.max(0,t.charges[kind])));
+      if(handMode&&left()&&(!spentTrigger||t.charges[handMode]>0)){
         const target=aim(player);
-        if(target){
-          let cap=Math.floor(rates[mode]*interval);
-          if(mode==='laser')cap=Math.min(cap,B.BUFFER_MAX-s.buffer);
-          const hitY=surface.height(target.x,target.z)+.10;
-          const n=cap>0?harvestBeam(target,cap,mode==='laser'?2.10:1.48):0;
-          if(n){
-            if(mode==='laser'){
-              feed(n);
-              surface.puff(target.x,target.z,n,[1,-.2]);
-            }else deposit(n);
-            hand={x:target.x,y:hitY,z:target.z,mode};handAge=0;changed=true;
+        const room=handMode==='laser'?B.BUFFER_MAX-s.buffer:Infinity;
+        if(target&&room>0){
+          if(!spentTrigger){
+            spentTrigger=true;
+            if(activate(s,handMode))changed=true;
+          }
+          const cap=Math.min(room,budget(handMode));
+          if(cap){
+            const hitY=surface.height(target.x,target.z)+.10;
+            const n=harvestBeam(target,cap,handMode==='laser'?2.10:1.48);
+            if(n){
+              if(handMode==='laser'){
+                feed(n);
+                surface.puff(target.x,target.z,n,[1,-.2]);
+              }else deposit(n);
+              hand={x:target.x,y:hitY,z:target.z,mode:handMode};handAge=0;changed=true;
+            }
           }
         }
       }
-      if(s.tech.gantry&&s.tech.mode!==2&&left()){
-        const result=automatic('gantry',rates.gantry*interval,s.tech.mode,null);
+      if(t.charges.gantry>0&&t.mode!==2&&left()){
+        const result=automatic('gantry',budget('gantry'),t.mode,null);
         gantryHit=result.last;
         changed=changed||result.n>0;
       }else gantryHit=null;
-      if(s.tech.mark){
-        const result=automatic('orbital',rates.orbital*interval,0,s.tech.mark);
+      if(t.mark&&t.charges.orbital>0){
+        const result=automatic('orbital',budget('orbital'),0,t.mark);
         orbitalHit=result.last;
         if(result.n)changed=true;
         if(!result.n||!left()){
-          s.tech.mark=null;
+          t.mark=null;
           changed=true;
-          if(left())say('Orbital pass complete. Mark another section.');
+          if(left())say('Section cleared. Mark another while the streak is active.');
         }
       }
-      if(s.tech.drones&&left())changed=drones()||changed;
+      if(t.charges.drones>0&&left())changed=drones()||changed;
+      for(const kind of Object.keys(limits)){
+        if(t.charges[kind]<=0)continue;
+        t.charges[kind]=Math.max(0,t.charges[kind]-interval);
+        changed=true;
+      }
+      if(t.mark&&t.charges.orbital===0)t.mark=null;
       if(changed)refresh();
     }
     function emitFrom(camera){
@@ -318,7 +373,7 @@ Rocks.future = (() => {
       }
       if(s.tech.gantry){
         out.push({item:gantryRail},{item:trolley,m:transform(trolleyX,6.54,-2.55)});
-        if(gantryHit&&s.tech.mode!==2&&elapsed-gantryHit.at<.35){
+        if(gantryHit&&s.tech.charges.gantry>0&&s.tech.mode!==2&&elapsed-gantryHit.at<.35){
           segment({x:trolleyX,y:6.29,z:-2.55},gantryHit,.065,'gantry');
           impact(gantryHit,'gantry',.37);
         }
@@ -340,13 +395,13 @@ Rocks.future = (() => {
         for(let i=0;i<3;i++){
           const phase=(elapsed*.41+i/3)%1, a=TAU*phase;
           let x=sweep.x+Math.cos(a)*(1.29+i*.24),z=sweep.z+Math.sin(a)*(1.29+i*.24);
-          const active=droneTrip&&elapsed-droneTrip.at<2.7;
+          const active=s.tech.charges.drones>0&&droneTrip&&elapsed-droneTrip.at<2.7;
           if(active){
             const t=.5+.5*Math.cos(a);
             x=mix(droneTrip.from.x,droneTrip.to.x,t)+Math.cos(a)*.52;
             z=mix(droneTrip.from.z,droneTrip.to.z,t)+Math.sin(a)*.45;
           }
-          const ground=surface.height(x,z), y=ground+1.45+Math.sin(a*2)*.19;
+          const ground=surface.height(x,z), y=ground+(s.tech.charges.drones>0?1.45+Math.sin(a*2)*.19:.25);
           out.push({item:drone,m:transform(x,y,z,.10,Math.PI-a,Math.sin(a)*.13,.86)});
           if(active){
             segment({x,y:y-.08,z},{x,y:ground+.07,z},.029,'drone');
@@ -358,5 +413,5 @@ Rocks.future = (() => {
     }
     return {tick,aim,parts,clear};
   }
-  return {upgrades,LASER,MATTER,ORBITAL,beltBatch,modes,rates,fresh,restore,create,viewModel};
+  return {upgrades,LASER,MATTER,ORBITAL,beltBatch,modes,rates,limits,reserveCap,hasTech,earn,activate,label,fresh,restore,create,viewModel};
 })();

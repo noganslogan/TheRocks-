@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  const $=s=>document.querySelector(s), R=Rocks.render, Y=Rocks.yard, M=Rocks.models, B=Rocks.backyard, C=Rocks.crew, F=Rocks.future;
+  const $=s=>document.querySelector(s), R=Rocks.render, Y=Rocks.yard, M=Rocks.models, B=Rocks.backyard, C=Rocks.crew, F=Rocks.future, W=Rocks.wife;
   const {TOTAL,pile,truck,shed,delivery,chair,cells}=Y, {tools}=M;
   const {clamp,mix,TAU,worldPose}=R;
   const canvas=R.canvas;
@@ -11,7 +11,7 @@
   }
   const SAVE='the-rocks-v01', pad={x:truck.x,z:truck.z+2.75};
   const spawn={x:-.65,z:5.6,yaw:-.39,pitch:-.02};
-  const fresh=()=>({version:6,...B.fresh(),tech:F.fresh(),crewDozer:null,handTier:0,intakeFocus:null,credits:0,removed:0,bag:0,tier:0,owned:[0],hits:{},rubble:{},depleted:Y.spread(0),vehicle:null});
+  const fresh=()=>({version:7,...B.fresh(),phone:W.fresh(),tech:F.fresh(),crewDozer:null,handTier:0,intakeFocus:null,credits:0,removed:0,bag:0,tier:0,owned:[0],hits:{},rubble:{},depleted:Y.spread(0),vehicle:null});
   const num=n=>n.toLocaleString('en-US');
   const int=(n,max=TOTAL)=>Number.isFinite(n)?clamp(Math.trunc(n),0,max):0;
   const finite=(n,fallback)=>Number.isFinite(n)?n:fallback;
@@ -23,7 +23,7 @@
     s.owned=[...new Set([0,...raw.owned.filter(i=>Number.isInteger(i)&&i>0&&i<tools.length)])].sort((a,b)=>a-b);
     s.tier=s.owned.includes(raw.tier)?raw.tier:0;
     B.restore(s,raw);
-    F.restore(s,raw);
+    F.restore(s,raw);s.phone=W.restore(raw.phone);
     const t=tools[s.tier];
     const hand=raw.handTier;
     s.handTier=t.eye?(s.owned.includes(hand)&&!tools[hand]?.eye?hand:s.owned.filter(i=>!tools[i].eye).at(-1)):s.tier;
@@ -138,11 +138,19 @@
     }
     $('#bar i').style.width=`${state.removed/TOTAL*100}%`;
     $('#factoryStatus').hidden=!state.factory;factoryStatus();
-    const gantry=$('#gantryBtn'), status=$('#techStatus');
+    const gantry=$('#gantryBtn'), drones=$('#droneBtn'), status=$('#techStatus');
     gantry.hidden=!state.tech.gantry;
-    gantry.textContent='GANTRY · '+F.modes[state.tech.mode].toUpperCase();
-    status.hidden=!state.tech.mark;
-    if(state.tech.mark)status.textContent='ORBITAL PASS ACTIVE';
+    gantry.textContent='GANTRY · '+(state.tech.charges.gantry>0?F.modes[state.tech.mode].toUpperCase()+' · ':'')+F.label(state,'gantry');
+    drones.hidden=!state.tech.drones;
+    drones.textContent='DRONES · '+F.label(state,'drones');
+    status.hidden=!F.hasTech(state);
+    if(!status.hidden){
+      const reserve=Math.floor(state.tech.reserve/100_000)/10;
+      const charge=t.tech?' · '+F.label(state,t.tech):'';
+      const pass=state.tech.mark&&t.tech!=='orbital'?' · ORBITAL '+F.label(state,'orbital'):'';
+      const value='STREAK '+reserve+'M / 60M'+charge+pass;
+      if(status.textContent!==value)status.textContent=value;
+    }
     if(shopOpen)drawShop();
   }
   function shopRow(name, detail, description, label, index, disabled, buy){
@@ -172,7 +180,10 @@
         const selected=state.tier===u.tier;
         const disabled=selected||(installed&&!u.tier)||(!installed&&state.credits<u.cost);
         const label=selected?'Equipped':installed?(u.tier?'Equip':'Installed'):num(u.cost)+' rocks';
-        return shopRow(u.name,u.detail,u.desc,label,i,disabled,!installed);
+        const limit=F.limits[u.kind];
+        const detail=u.detail+' · '+limit.seconds+'s per charge';
+        const description=u.desc+' Recharge '+num(limit.recharge)+' hands-on rocks.';
+        return shopRow(u.name,detail,description,label,i,disabled,!installed);
       });
     }else if(shopTab==='factory'){
       rows=B.factory.map((f,i)=>shopRow(f.name,'Outdoor equipment',f.detail,state.factory>i?'Installed':num(f.cost)+' rocks',i,
@@ -245,6 +256,7 @@
       state.credits-=u.cost;
       if(u.tier)state.owned.push(u.tier);
       else state.tech[u.key]=true;
+      state.tech.charges[u.kind]=-1;
     }
     if(u.tier===F.LASER&&!state.factory)state.factory=1;
     if(u.tier){
@@ -287,7 +299,7 @@
     if(!buddy||i!==state.buddies.length||state.credits<buddy.cost)return false;
     state.credits-=buddy.cost;
     state.buddies.push(C.newHire(i));
-    B.record(state.phone,'log',buddy.name+' is on the way.');
+    W.record(state.phone,'log',buddy.name+' is on the way.');
     save();updateUI();
     return true;
   }
@@ -569,7 +581,7 @@
     // Heavy equipment sweeps the surrounding gravel even when it catches a boulder.
     if(!n||t.eye)n+=surface.excavate(x,z,Math.min(space-n,B.rate(state,t)),t.eye?(t.mode==='dozer'?1.65:t.mode==='excavator'?1.22:.90):.70);
     if(!n){if(!t.hold&&t.mode!=='dozer')say('That patch is clear. Move along the pile.');return;}
-    if(directFeed())feedBelt(n);
+    if(directFeed())feedBelt(n,true);
     else state.bag+=n;
     const direction=facing(mounted()?state.vehicle.yaw:player.yaw).map(v=>v*(t.mode==='dozer'?1:-1));
     surface.puff(x,z,n,direction);
@@ -577,23 +589,25 @@
     else if(!t.hold&&t.mode!=='dozer')say('+'+num(n)+(n===1?' rock':' rocks'));
     updateUI();save();
   }
-  function deposit(n){
+  function deposit(n,manual=0){
     const before=state.removed;
     state.credits+=n;
     state.removed+=n;
+    F.earn(state,manual);
     if((before<70&&state.removed>=70)||(before<220&&state.removed>=220))surface.changed();
   }
-  function feedBelt(amount){
+  function feedBelt(amount,manual=false){
     if(!state.factory)return 0;
     const n=Math.min(amount,B.BUFFER_MAX-state.buffer);
     state.buffer+=n;
+    if(manual)state.tech.manualQueued+=n;
     return n;
   }
   function finishDump(){
     if(!state.bag||!nearTruck())return;
     const n=state.bag;
     state.bag=0;
-    deposit(n);
+    deposit(n,n);
     if(current().mode==='dozer')blade=false;
     surface.puff(pad.x,pad.z,Math.min(n,32));
     say(state.removed===TOTAL?'Done. Larry thinks you missed one.':'+'+num(n)+' rock credits');
@@ -638,15 +652,34 @@
     const target=tech.aim(player,mode==='orbital'?36:29);
     if(!target){say('Aim at a patch of rock.');return;}
     if(mode==='orbital'){
+      if(!armStreak('orbital'))return;
       state.tech.mark={x:target.x,z:target.z};
       say('Section marked. Orbital pass underway.');
       updateUI();save();
+    }else if(state.tech.charges[mode]===0&&state.tech.reserve<F.limits[mode].recharge){
+      say('Recharge needs '+num(F.limits[mode].recharge)+' hands-on rocks.');
     }
+  }
+  function armStreak(kind){
+    if(F.activate(state,kind))return true;
+    say('Recharge needs '+num(F.limits[kind].recharge)+' hands-on rocks.');
+    return false;
   }
   function toggleGantry(){
     if(!started||!state.tech.gantry||shopOpen||phone.visible())return;
-    state.tech.mode=(state.tech.mode+1)%F.modes.length;
-    say('Gantry · '+F.modes[state.tech.mode]);
+    if(state.tech.charges.gantry>0){
+      state.tech.mode=(state.tech.mode+1)%F.modes.length;
+    }else{
+      if(!armStreak('gantry'))return;
+      if(state.tech.mode===2)state.tech.mode=0;
+    }
+    say('Gantry · '+F.modes[state.tech.mode]+' · '+F.label(state,'gantry'));
+    updateUI();save();
+  }
+  function launchDrones(){
+    if(!started||!state.tech.drones||shopOpen||phone.visible()||state.tech.charges.drones>0)return;
+    if(!armStreak('drones'))return;
+    say('Sweep drones deployed for 40 seconds.');
     updateUI();save();
   }
   function workYard(dt){
@@ -654,7 +687,7 @@
     if(!state.factory)return;
     let changed=false;
     if(nearHopper()&&unloadable()){
-      const sent=feedBelt(state.bag);
+      const sent=feedBelt(state.bag,true);
       if(sent){
         state.bag-=sent;changed=true;
         surface.puff(B.hopper.x,B.hopper.z,Math.min(sent,12));
@@ -665,7 +698,11 @@
       state.factoryTick-=4;
       const boosted=state.factory===3;
       const output=Math.min(state.buffer,state.owned.includes(F.LASER)?F.beltBatch:boosted?3_600_000:1_200_000);
-      if(output){state.buffer-=output;deposit(output);changed=true;}
+      if(output){
+        const manual=Math.min(output,state.tech.manualQueued);
+        state.tech.manualQueued-=manual;
+        state.buffer-=output;deposit(output,manual);changed=true;
+      }
       if(state.factory>=2){
         const focus=state.intakeFocus||B.defaultPickup;
         const target=surface.nearest(focus.x,focus.z,B.pickupRadius)||(boosted&&
@@ -833,6 +870,7 @@
   $('#mount').onclick=mount;
   $('#intakeBtn').onclick=moveIntake;
   $('#gantryBtn').onclick=toggleGantry;
+  $('#droneBtn').onclick=launchDrones;
   $('#act').onclick=e=>{
     if(!current().hold||e.detail===0)requestAction();
   };
@@ -908,6 +946,7 @@
     if(k==='f')mount();
     if(k==='c')moveIntake();
     if(k==='g')toggleGantry();
+    if(k==='v')launchDrones();
   });
   window.addEventListener('keyup',e=>heldKeys.delete(e.key.toLowerCase()));
   window.addEventListener('blur',clearMovement);

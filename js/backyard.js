@@ -36,13 +36,11 @@ Rocks.backyard = (() => {
   const BUFFER_MAX=24_000_000;
   const fresh=()=>({
     carry:0,carryOwned:[0],training:[0,0,0],buddies:[],
-    factory:0,buffer:0,factoryTick:0,
-    phone:{time:0,nextText:300,nextCall:1800,nextNag:0,textIndex:0,callIndex:0,notify:0,ring:false,active:false,callAge:0,unread:false,chat:[]}
+    factory:0,buffer:0,factoryTick:0
   });
   const int=(n,max)=>Number.isFinite(n)?clamp(Math.floor(n),0,max):0;
   const elapsed=(n,max)=>Number.isFinite(n)?clamp(n,0,max):0;
   function restore(s,raw){
-    const initial=fresh(), p=raw.phone;
     s.carryOwned=[...new Set([0,...(Array.isArray(raw.carryOwned)?raw.carryOwned.filter(i=>Number.isInteger(i)&&i>0&&i<carriers.length):[])])].sort((a,b)=>a-b);
     for(const [tier,carry] of [[5,4],[7,5]]){
       if(s.owned.includes(tier))for(let i=1;i<=carry;i++)if(!s.carryOwned.includes(i))s.carryOwned.push(i);
@@ -55,15 +53,6 @@ Rocks.backyard = (() => {
     s.factory=int(raw.factory,factory.length);
     s.buffer=s.factory?int(raw.buffer,Math.min(BUFFER_MAX,Rocks.yard.TOTAL-s.removed)):0;
     s.factoryTick=elapsed(raw.factoryTick,4);
-    if(p&&Number.isFinite(p.time)){
-      s.phone={...initial.phone,
-        time:elapsed(p.time,1e9),nextText:int(p.nextText,1e9)||300,nextCall:int(p.nextCall,1e9)||1800,
-        nextNag:elapsed(p.nextNag,1e9),textIndex:int(p.textIndex,1e9),callIndex:int(p.callIndex,1e9),notify:int(p.notify,1e9),
-        unread:!!p.unread,ring:!!(p.ring||p.active),active:false,callAge:0,
-        chat:Array.isArray(p.chat)?p.chat.slice(-24).filter(m=>Array.isArray(m)&&m.length===2&&
-          ['wife','me','log'].includes(m[0])&&typeof m[1]==='string').map(([a,b])=>[a,b.slice(0,300)]):[]
-      };
-    }
     const t=Rocks.models.tools[s.tier];
     const oldBag=int(raw.bag,Rocks.yard.TOTAL-s.removed-s.buffer);
     if(!(raw.version>=4)&&!t.eye && carriers[s.carry].cap<oldBag){
@@ -81,66 +70,6 @@ Rocks.backyard = (() => {
   function speed(s,t){return t.eye?1:1+s.training[0]*.19;}
   function prevTool(i){return toolIds[toolIds.indexOf(i)-1];}
 
-  const texts=[
-    'Are you almost done? How long is this going to take?',
-    'Can you please remember to bring eggs, milk, bread, celery, and a collagen night wrapping mask on your way home?',
-    'When you get home you’re cleaning the kitchen. I’m not your maid.',
-    'Larry says you’re doing great. How many rocks is “great,” exactly?',
-    'Don’t bring your shoes inside when you get home.',
-    'Can you get the eggs with the blue label? The other blue label.',
-    'Did Larry at least offer you a water?',
-    'Since you’re already out, can you stop for one more thing?',
-    'Do we have plans tonight? I told my mom we had plans tonight.',
-    'If you buy that man an excavator I’m putting it on Facebook Marketplace.'
-  ];
-  const nags=['Hello…?','??','I know you have your phone.','Can you at least say you saw this?','Never mind. Call me.'];
-  const calls=[
-    'Hey. I thought this was going to take like an hour.',
-    'The grocery list changed. I’ll text it to you. Please actually read it this time.',
-    'Is that a machine I can hear? Please tell me you borrowed it.',
-    'Can you hear me? Hang on, I’m looking for my keys.',
-    'You sound busy. Anyway, my mom says hi.'
-  ];
-  function record(p,who,message){
-    p.chat.push([who,message]);
-    if(p.chat.length>24)p.chat.shift();
-  }
-  function timetable(p,dt){
-    p.time+=dt;
-    let activity=null;
-    if(p.time>=p.nextText){
-      p.nextText+=300;
-      record(p,'wife',texts[p.textIndex++%texts.length]);
-      p.unread=true;
-      p.nextNag=p.nextNag>p.time?Math.min(p.nextNag,p.time+32):p.time+32;
-      activity='text';
-    }
-    if(p.time>=p.nextCall){
-      p.nextCall+=1800;
-      p.ring=true;
-      p.active=false;
-      p.callAge=0;
-      p.nextNag=p.time+18;
-      activity='call';
-    }
-    if(p.active){
-      p.callAge+=dt;
-      if(p.callAge>=21){
-        p.active=false;
-        p.nextNag=p.unread?p.time+32:0;
-        record(p,'log','Call ended');
-        activity=activity||'ended';
-      }
-    }
-    if(!p.active&&(p.unread||p.ring)&&p.nextNag>0&&p.time>=p.nextNag){
-      record(p,'wife',p.ring?'Why didn’t you answer?':nags[p.notify%nags.length]);
-      p.notify++;
-      p.unread=true;
-      p.nextNag=p.time+Math.max(11,32-p.notify*4);
-      return p.ring?'call':'text';
-    }
-    return activity;
-  }
   const part=draw=>mesh(build(draw));
   function blocksFactory(x,z,radius,level){
     if(!level)return false;
@@ -222,5 +151,5 @@ Rocks.backyard = (() => {
     return out;
   }
   return {carriers,toolIds,training,buddies,factory,hopper,intake,defaultPickup,pickupRadius,intakeTether,BUFFER_MAX,fresh,restore,capacity,rate,speed,prevTool,
-    timetable,record,calls,factoryParts,blocksFactory};
+    factoryParts,blocksFactory};
 })();

@@ -1,3 +1,22 @@
+# THE ROCKS. v0.7
+
+- Kept all five Tech prices and introduced limited, timed charges. Old
+  purchases receive an initial charge. An orbital mark from v0.6 gets a
+  single eight-second pass.
+- Disintegrator: 5M/sec for 30 seconds. Gantry: 500,000/sec for 60 seconds.
+  Laser Excavator: 2.6M/sec for 20 seconds. Drones: 40-second deployments.
+  Orbital Yard Service: 12M/sec for eight seconds.
+- Recharging spends a shared reserve earned by delivering your own
+  conventional loads. Tech, crew, and passive collector output still earn
+  credits. The reserve, remaining timers, and queued manual loads are saved.
+- Replaced generic phone replies with multi-turn text and call trees.
+  Negotiated plans carry over to later conversations, time estimates can
+  trigger callbacks, and clearing the yard unlocks a closing conversation.
+
+The automated release suite checks rates and caps, recharge attribution,
+held-trigger limits, timers and plans across reload, and branching calls
+that respond to earlier texts.
+
 # THE ROCKS. v0.6
 
 - Added the Tech tab with five futuristic upgrades and their own controls.
