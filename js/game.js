@@ -1,7 +1,7 @@
 'use strict';
 
 (() => {
-  const $=s=>document.querySelector(s), R=Rocks.render, Y=Rocks.yard, M=Rocks.models, B=Rocks.backyard, C=Rocks.crew;
+  const $=s=>document.querySelector(s), R=Rocks.render, Y=Rocks.yard, M=Rocks.models, B=Rocks.backyard, C=Rocks.crew, F=Rocks.future;
   const {TOTAL,pile,truck,shed,delivery,chair,cells}=Y, {tools}=M;
   const {clamp,mix,TAU,worldPose}=R;
   const canvas=R.canvas;
@@ -11,7 +11,7 @@
   }
   const SAVE='the-rocks-v01', pad={x:truck.x,z:truck.z+2.75};
   const spawn={x:-.65,z:5.6,yaw:-.39,pitch:-.02};
-  const fresh=()=>({version:5,...B.fresh(),crewDozer:null,handTier:0,intakeFocus:null,credits:0,removed:0,bag:0,tier:0,owned:[0],hits:{},rubble:{},depleted:Y.spread(0),vehicle:null});
+  const fresh=()=>({version:6,...B.fresh(),tech:F.fresh(),crewDozer:null,handTier:0,intakeFocus:null,credits:0,removed:0,bag:0,tier:0,owned:[0],hits:{},rubble:{},depleted:Y.spread(0),vehicle:null});
   const num=n=>n.toLocaleString('en-US');
   const int=(n,max=TOTAL)=>Number.isFinite(n)?clamp(Math.trunc(n),0,max):0;
   const finite=(n,fallback)=>Number.isFinite(n)?n:fallback;
@@ -23,6 +23,7 @@
     s.owned=[...new Set([0,...raw.owned.filter(i=>Number.isInteger(i)&&i>0&&i<tools.length)])].sort((a,b)=>a-b);
     s.tier=s.owned.includes(raw.tier)?raw.tier:0;
     B.restore(s,raw);
+    F.restore(s,raw);
     const t=tools[s.tier];
     const hand=raw.handTier;
     s.handTier=t.eye?(s.owned.includes(hand)&&!tools[hand]?.eye?hand:s.owned.filter(i=>!tools[i].eye).at(-1)):s.tier;
@@ -103,6 +104,10 @@
   });
   const crew=C.create({getState:()=>state,surface,blocked:worldBlock,harvest:harvestAt,feed:feedBelt,deposit,pad,
     refresh(){updateUI();save();}});
+  const tech=F.create({getState:()=>state,surface,left:yardLeft,harvest:harvestAt,feed:feedBelt,deposit,say,
+    refresh(){updateUI();save();}});
+  const firing=()=>!phone.visible()&&!shopOpen&&!nearShed()&&!(nearTruck()&&state.bag)
+    &&(workPointer!==null||heldKeys.has('e')||heldKeys.has(' '));
   function save(){
     try{localStorage.setItem(SAVE,JSON.stringify(state));}catch{}
     lastSave=clock;
@@ -124,10 +129,20 @@
     $('#remaining').textContent=num(yardLeft());
     $('#credits').textContent=num(state.credits);
     $('#toolName').textContent=t.n;
-    $('#bag').textContent=`${num(state.bag)} / ${num(capacity())}`;
-    $('#bagLabel').textContent=state.bag>=capacity()?'FULL · unload':t.mode==='dozer'?'ahead of blade':t.eye?'machine load':carrier().name;
+    if(t.tech&&!state.bag){
+      $('#bag').textContent=(F.rates[t.tech]/1_000_000)+'M / sec';
+      $('#bagLabel').textContent={laser:'to the hopper',matter:'straight to credits',orbital:'within the marked section'}[t.tech];
+    }else{
+      $('#bag').textContent=`${num(state.bag)} / ${num(capacity())}`;
+      $('#bagLabel').textContent=state.bag>=capacity()?'FULL · unload':t.mode==='dozer'?'ahead of blade':t.eye?'machine load':carrier().name;
+    }
     $('#bar i').style.width=`${state.removed/TOTAL*100}%`;
     $('#factoryStatus').hidden=!state.factory;factoryStatus();
+    const gantry=$('#gantryBtn'), status=$('#techStatus');
+    gantry.hidden=!state.tech.gantry;
+    gantry.textContent='GANTRY · '+F.modes[state.tech.mode].toUpperCase();
+    status.hidden=!state.tech.mark;
+    if(state.tech.mark)status.textContent='ORBITAL PASS ACTIVE';
     if(shopOpen)drawShop();
   }
   function shopRow(name, detail, description, label, index, disabled, buy){
@@ -150,6 +165,14 @@
         const level=state.training[i], cost=u.costs[level];
         const detail=i===1?`Level ${level} · larger grabs and scoops`:`Level ${level} · +${level*(i===0?19:15)}% speed`;
         return shopRow(u.name,detail,u.detail,cost?num(cost)+' rocks':'Maxed',i,!cost||state.credits<cost,true);
+      });
+    }else if(shopTab==='tech'){
+      rows=F.upgrades.map((u,i)=>{
+        const installed=u.tier?state.owned.includes(u.tier):state.tech[u.key];
+        const selected=state.tier===u.tier;
+        const disabled=selected||(installed&&!u.tier)||(!installed&&state.credits<u.cost);
+        const label=selected?'Equipped':installed?(u.tier?'Equip':'Installed'):num(u.cost)+' rocks';
+        return shopRow(u.name,u.detail,u.desc,label,i,disabled,!installed);
       });
     }else if(shopTab==='factory'){
       rows=B.factory.map((f,i)=>shopRow(f.name,'Outdoor equipment',f.detail,state.factory>i?'Installed':num(f.cost)+' rocks',i,
@@ -211,9 +234,32 @@
     updateUI();save();
     say(t.eye?t.n+' delivered on the pad outside.':'Picked up '+t.n+' from the shed.');
   }
+  function buyTech(i){
+    const u=F.upgrades[i];
+    if(!u)return;
+    const installed=u.tier?state.owned.includes(u.tier):state.tech[u.key];
+    if(installed&&(!u.tier||state.tier===u.tier))return;
+    if(u.tier&&current().eye&&state.bag){say('Unload your machine before switching equipment.');return;}
+    if(!installed){
+      if(state.credits<u.cost)return;
+      state.credits-=u.cost;
+      if(u.tier)state.owned.push(u.tier);
+      else state.tech[u.key]=true;
+    }
+    if(u.tier===F.LASER&&!state.factory)state.factory=1;
+    if(u.tier){
+      state.tier=state.handTier=u.tier;state.vehicle=null;
+      speed=steering=wheel=0;blade=false;
+    }
+    openShop(false);
+    updateUI();save();
+    const help=u.tier===F.LASER?' · high-speed belt installed':u.tier===F.ORBITAL&&!state.tech.permit?' · get Larry’s permit':'';
+    say(u.name+(u.tier?' equipped':' installed')+help+'.');
+  }
   function buyShop(i){
     if(shopTab==='tools'){equip(i);return;}
     if(!shopOpen||!nearShed()||action)return;
+    if(shopTab==='tech'){buyTech(i);return;}
     if(shopTab==='carry'){
       const c=B.carriers[i], own=state.carryOwned.includes(i);
       if(!c||state.carry===i)return;
@@ -380,7 +426,7 @@
     }
     speed=steering=0;
     if(magnitude>.045){
-      const rig=!t.eye&&carrier().rig, factor=rig?(state.bag>=capacity()?.87:.96):1;
+      const rig=!t.eye&&(!t.tech||state.bag)&&carrier().rig, factor=rig?(state.bag>=capacity()?.87:.96):1;
       const distance=dt*4.65*factor*(1+state.training[2]*.15);
       const dx=sx*Math.cos(player.yaw)-sy*Math.sin(player.yaw),dz=sx*Math.sin(player.yaw)+sy*Math.cos(player.yaw);
       const nx=player.x+dx*distance,nz=player.z+dz*distance;
@@ -466,6 +512,7 @@
     }
     if(nearShed()){openShop(true);return;}
     if(!yardLeft()){say(state.bag?'Bring the last load to the truck.':state.removed<TOTAL?'The last rocks are on their way to the truck.':'Done. Larry thinks you missed one.');return;}
+    if(t.tech){useTech(t.tech);return;}
     if(t.mode==='dozer'){
       blade=!blade;
       say(blade?'Blade down. Drive forward into the gravel.':'Blade raised.');
@@ -577,6 +624,31 @@
     say('Powered collector moved to this patch.');
     save();
   }
+  function useTech(mode){
+    if(mode==='orbital'&&!state.tech.permit){
+      if(larry.hidden||!close(player,larry,3.2)){say('Find Larry and ask him to sign the permit.');return;}
+      state.tech.permit=true;
+      $('#dialogue span').textContent='“Does that run off my electric?”';
+      $('#dialogue').hidden=false;
+      dialogueUntil=clock+4.4;
+      say('Permit signed. Aim at the pile and mark a section.');
+      updateUI();save();
+      return;
+    }
+    const target=tech.aim(player,mode==='orbital'?36:29);
+    if(!target){say('Aim at a patch of rock.');return;}
+    if(mode==='orbital'){
+      state.tech.mark={x:target.x,z:target.z};
+      say('Section marked. Orbital pass underway.');
+      updateUI();save();
+    }
+  }
+  function toggleGantry(){
+    if(!started||!state.tech.gantry||shopOpen||phone.visible())return;
+    state.tech.mode=(state.tech.mode+1)%F.modes.length;
+    say('Gantry · '+F.modes[state.tech.mode]);
+    updateUI();save();
+  }
   function workYard(dt){
     crew.tick(dt);
     if(!state.factory)return;
@@ -592,7 +664,7 @@
     if(state.factoryTick>=4){
       state.factoryTick-=4;
       const boosted=state.factory===3;
-      const output=Math.min(state.buffer,boosted?3_600_000:1_200_000);
+      const output=Math.min(state.buffer,state.owned.includes(F.LASER)?F.beltBatch:boosted?3_600_000:1_200_000);
       if(output){state.buffer-=output;deposit(output);changed=true;}
       if(state.factory>=2){
         const focus=state.intakeFocus||B.defaultPickup;
@@ -617,7 +689,7 @@
       }
       if(age>=action.end)action=null;
     }
-    if(!action&&!phone.visible()&&current().hold&&(workPointer!==null||heldKeys.has('e')||heldKeys.has(' '))&&!(nearTruck()&&state.bag)){
+    if(!action&&!phone.visible()&&!current().tech&&current().hold&&(workPointer!==null||heldKeys.has('e')||heldKeys.has(' '))&&!(nearTruck()&&state.bag)){
       if((!current().eye&&room()>0&&handTarget())||(mounted()&&state.bag<capacity()&&machineTarget()))requestAction();
     }
   }
@@ -705,6 +777,15 @@
     else if(nearTruck()&&state.bag&&(!vehicle||riding)){h='Unload into the truck';a='UNLOAD';}
     else if(nearShed()){h='Tool shed · buy or swap equipment';a='TOOLS';}
     else if(vehicle&&!riding){h=nearVehicle()?'Enter '+t.n:'Find your machine on the delivery pad or where you parked it';a='ENTER';}
+    else if(t.tech){
+      if(t.tech==='orbital'){
+        h=state.tech.permit?(state.tech.mark?'Orbital pass is active':'Aim at the section you want cleared'):'Find Larry for the orbital permit';
+        a=state.tech.permit?'MARK AREA':'ASK LARRY';
+      }else if(t.tech==='laser'){
+        h=state.buffer>=B.BUFFER_MAX?'Hopper backed up · keep holding to resume':'Aim and hold · cut rock straight into the hopper';
+        a='CUT';
+      }else{h='Aim and hold · vaporized rocks become credits';a='VAPORIZE';}
+    }
     else if(!directFeed()&&state.bag>=capacity()){h='Load full · head to the truck';a=t.mode==='dozer'?(blade?'RAISE':'LOWER BLADE'):'FULL';}
     else if(riding){
       if(t.mode==='dozer'){
@@ -723,7 +804,7 @@
         a=t.mode==='jack'?'DRILL':t.mode==='vac'?'VACUUM':'BREAK';
       }else{h=t.hold?'Hold to collect gravel':'Collect the gravel';a=t.mode==='jack'?'DRILL':t.mode==='vac'?'VACUUM':t.mode==='shovel'?'SCOOP':'COLLECT';}
     }
-    if(directFeed()&&handTarget()){
+    if(!t.tech&&directFeed()&&handTarget()){
       h=room()?'Hopper in reach · rocks feed automatically':'Hopper backed up · keep holding to resume';
       if(t.mode==='jack')a='DRILL';
     }
@@ -751,6 +832,7 @@
   };
   $('#mount').onclick=mount;
   $('#intakeBtn').onclick=moveIntake;
+  $('#gantryBtn').onclick=toggleGantry;
   $('#act').onclick=e=>{
     if(!current().hold||e.detail===0)requestAction();
   };
@@ -770,7 +852,7 @@
   };
   $('#reset').onclick=()=>{
     if(!confirm('Start over? All progress will be lost.'))return;
-    state=fresh();player={...spawn};shopTab='tools';phone.refresh();
+    state=fresh();tech.clear();player={...spawn};shopTab='tools';phone.refresh();
     speed=wheel=walk=0;blade=false;action=null;
     Object.assign(larry,{x:points.patio.x,z:points.patio.z,yaw:points.patio.yaw,path:null,route:0,lastLine:clock-12});
     larry.lines.clear();setLarry('stand',2.4);
@@ -825,6 +907,7 @@
     if(k==='e'||k===' ')requestAction();
     if(k==='f')mount();
     if(k==='c')moveIntake();
+    if(k==='g')toggleGantry();
   });
   window.addEventListener('keyup',e=>heldKeys.delete(e.key.toLowerCase()));
   window.addEventListener('blur',clearMovement);
@@ -844,7 +927,7 @@
       const pose=worldPose(vehicle.x,ground,vehicle.z,vehicle.yaw);
       world.push(...M.machinery(state.tier,pose,{spin:wheel,work,dump,fill,blade,cab:!riding}));
     }
-    const rig=!t.eye&&carrier().rig;
+    const rig=!t.eye&&(!t.tech||state.bag)&&carrier().rig;
     if(rig){
       const [fx,fz]=facing(player.yaw);
       const offset=rig==='bin'?1:.65;
@@ -856,16 +939,16 @@
       const clipAge=clock-larry.at;
       world.push(Rocks.larry.part(larry.clip,clipAge,worldPose(larry.x,0,larry.z,larry.yaw)));
     }
-    world.push(...B.factoryParts(state,surface),...crew.parts(player));
+    world.push(...B.factoryParts(state,surface,state.owned.includes(F.LASER)),...crew.parts(player),...tech.parts(camera));
     const pushing=rig&&action?.kind!=='work';
-    const view=M.viewModel(pushing?(rig==='bin'?7:rig):state.tier,time,walk,fill,riding,dump,steering,blade);
-    if(!t.eye&&state.carry===2&&action?.kind!=='work')view.push(...M.carryBucket(fill,dump,walk));
+    const view=t.tech?F.viewModel(t.tech,walk,firing()):M.viewModel(pushing?(rig==='bin'?7:rig):state.tier,time,walk,fill,riding,dump,steering,blade);
+    if(!t.eye&&(!t.tech||state.bag)&&state.carry===2&&action?.kind!=='work')view.push(...M.carryBucket(fill,dump,walk));
     R.draw(world,view,camera);
   }
   function advanceGame(dt){
     clock+=dt;
     if(!phone.visible())motion(dt);
-    actions();updateLarry(dt);workYard(dt);phone.tick(dt);
+    actions();updateLarry(dt);workYard(dt);tech.tick(dt,player,current().tech,firing());phone.tick(dt);
     if(clock-lastSave>=25)save();
   }
   function frame(now){

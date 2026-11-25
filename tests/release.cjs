@@ -41,13 +41,13 @@ function start({saved=null,software=true,instanced=false}={}){
     localStorage:{getItem:()=>snapshot,setItem(key,value){snapshot=value;writes++;}}
   };
   vm.createContext(env);
-  for(const file of ['render','models','larry-data','crew-data','larry-rig','yard','backyard','crew','phone','game']){
+  for(const file of ['render','models','larry-data','crew-data','larry-rig','yard','backyard','crew','phone','future','game']){
     let code=fs.readFileSync(path.join(root,'js',file+'.js'),'utf8');
     if(file==='game'){
       const marker='  updateUI();\n  requestAnimationFrame(frame);';
       assert.ok(code.includes(marker));
       code=code.replace(marker,`
-        window.harness={surface,larry,heldKeys,openShop,equip,mount,requestAction,capacity,phone,crew,crewJob,crewUpgrade,
+        window.harness={surface,larry,heldKeys,openShop,equip,mount,requestAction,capacity,phone,crew,tech,crewJob,crewUpgrade,
           get player(){return player;},get state(){return state;},get action(){return action;},
           get clock(){return clock;},get blade(){return blade;},get tools(){return tools;},
           inside:()=>shopOpen,current,handTarget,machineTarget,nearTruck,worldBlock,migration,render,
@@ -613,5 +613,137 @@ test('the powered intake can be moved to a reachable cut',()=>{
   assert.equal(g.state.intakeFocus.z,target.z);
   h.steps(78);
   assert.ok(g.state.buffer>0);
+  evidence(g);
+});
+
+function aimAt(g,x,z){
+  const p=g.player;
+  const dy=g.surface.height(x,z)-g.surface.height(p.x,p.z)-1.52;
+  p.yaw=Math.atan2(x-p.x,p.z-z);
+  p.pitch=Math.atan2(dy,Math.hypot(x-p.x,z-p.z));
+  assert.ok(g.tech.aim(p),'camera can acquire a rock target');
+}
+
+test('all five future purchases charge once and persist on an existing save',()=>{
+  const h=start({saved:JSON.stringify({version:5,removed:450_000_000,credits:400_000_000,owned:[0,9],tier:9,factory:0})}),g=h.game;
+  const F=vm.runInContext('Rocks.future',h.env);
+  for(let i=0;i<F.upgrades.length;i++)shopClick(h,'tech',i);
+  assert.equal(g.state.credits,20_000_000);
+  assert.equal(g.state.factory,1,'laser included a high-speed conveyor');
+  assert.equal(g.state.tier,F.ORBITAL);
+  assert.equal(g.state.tech.permit,false);
+  assert.ok(g.state.tech.drones&&g.state.tech.gantry);
+  shopClick(h,'tech',0);
+  shopClick(h,'tech',1);
+  assert.equal(g.state.credits,20_000_000);
+  assert.equal(g.state.tier,F.MATTER);
+  assert.ok(g.state.owned.includes(F.LASER)&&g.state.owned.includes(F.ORBITAL));
+  const saved=start({saved:h.snapshot()});
+  assert.deepEqual(JSON.parse(JSON.stringify(saved.game.state)),JSON.parse(JSON.stringify(g.state)));
+  evidence(saved.game);
+});
+
+test('landscape touch laser cuts directly into the hopper and the high-speed belt drains it',()=>{
+  const h=start({saved:JSON.stringify({version:6,removed:400_000_000,credits:100_000_000,owned:[0,16],tier:16,factory:1})}),g=h.game;
+  setPlayer(g,-.65,4.8);
+  aimAt(g,-3.9,-1.6);
+  h.event('#act','pointerdown');
+  h.steps(30,.05);
+  h.event('#act','pointerup');
+  assert.equal(g.state.bag,0);
+  assert.equal(g.state.buffer,3_900_000);
+  assert.equal(g.state.removed,400_000_000);
+  evidence(g);
+  h.steps(51,.05);
+  assert.equal(g.state.buffer,0);
+  assert.equal(g.state.removed,403_900_000,'the installed conveyor processes more than the base belt per tick');
+  assert.equal(g.state.credits,103_900_000);
+  evidence(g);
+});
+
+test('disintegrator pays at impact with a full carrier and stops on release',()=>{
+  const h=start({saved:JSON.stringify({version:6,removed:420_000_000,credits:80_000_000,owned:[0,17],tier:17,bag:1})}),g=h.game;
+  setPlayer(g,-.8,4.6);
+  aimAt(g,-4.1,-1.7);
+  h.key('keydown','e');h.steps(40,.05);h.key('keyup','e');
+  assert.equal(g.state.removed,424_000_000);
+  assert.equal(g.state.credits,84_000_000);
+  assert.equal(g.state.bag,1,'old cargo stays in the carrier');
+  assert.equal(g.state.buffer,0);
+  h.steps(40,.05);
+  assert.equal(g.state.removed,424_000_000);
+  evidence(g);
+});
+
+test('gravity drones consolidate actual field stock and do not mint credits',()=>{
+  const h=start({saved:JSON.stringify({version:6,removed:640_000_000,credits:80_000_000,owned:[0],tech:{drones:true}})}),g=h.game;
+  const Y=vm.runInContext('Rocks.yard',h.env);
+  const area=Y.cells.filter(c=>Math.hypot(c.x-.06,c.z-.91)<=1.65);
+  const before=area.reduce((n,c)=>n+g.surface.available(c.id),0);
+  h.steps(20,.05);
+  const after=area.reduce((n,c)=>n+g.surface.available(c.id),0);
+  assert.ok(after>before);
+  assert.equal(g.state.removed,640_000_000);
+  assert.equal(g.state.credits,80_000_000);
+  evidence(g);
+  h.frame();
+});
+
+test('gantry can pause or switch modes and cleans up the last isolated cells and rubble',()=>{
+  const h=start({saved:JSON.stringify({version:6,removed:total-1000,credits:100_000_000,owned:[0],
+    tech:{gantry:true,mode:0}})}),g=h.game;
+  const Y=vm.runInContext('Rocks.yard',h.env);
+  const first=Y.cells.find(c=>c.capacity>100_000), last=Y.cells.findLast(c=>c.capacity>100_000);
+  const rock=g.surface.geology[26];
+  g.state.depleted=Y.cells.map(c=>c.capacity);
+  g.state.depleted[first.id]-=234;
+  g.state.depleted[last.id]-=666;
+  g.state.hits[rock.id]=rock.req;
+  g.state.rubble[rock.id]=100;
+  evidence(g);
+  h.event('#gantryBtn','click');
+  assert.equal(g.state.tech.mode,1);
+  h.event('#gantryBtn','click');
+  assert.equal(g.state.tech.mode,2);
+  h.steps(20,.05);
+  assert.equal(g.state.removed,total-1000);
+  h.event('#gantryBtn','click');
+  h.event('#gantryBtn','click'); // Cleanup
+  h.steps(20,.05);
+  assert.equal(g.state.removed,total);
+  assert.equal(g.state.rubble[rock.id],undefined);
+  assert.equal(g.state.credits,100_001_000);
+  evidence(g);
+});
+
+test('Larry authorizes the orbital pass, which resumes from a save at 12 million rocks per second',()=>{
+  const h=start({saved:JSON.stringify({version:6,removed:500_000_000,credits:100_000_000,owned:[0,18],tier:18})}),g=h.game;
+  setPlayer(g,4,5.0);
+  g.requestAction();
+  assert.equal(g.state.tech.permit,false);
+  setPlayer(g,g.larry.x, g.larry.z-.5);
+  g.requestAction();
+  assert.ok(g.state.tech.permit);
+  assert.match(h.node('#dialogue span').textContent,/electric/);
+  setPlayer(g,-.8,4.5);
+  aimAt(g,-4.4,-1.9);
+  g.requestAction();
+  assert.ok(g.state.tech.mark);
+  const h2=start({saved:h.snapshot()}),g2=h2.game;
+  assert.ok(g2.state.tech.permit&&g2.state.tech.mark);
+  h2.steps(40,.05);
+  assert.equal(g2.state.removed,524_000_000);
+  assert.equal(g2.state.credits,124_000_000);
+  evidence(g2);
+});
+
+test('orbital service and the gantry can clear 500 million rocks in under one minute',()=>{
+  const h=start({saved:JSON.stringify({version:6,removed:500_000_000,credits:50_000_000,
+    owned:[0,18],tier:18,tech:{gantry:true,permit:true,mark:{x:-4.4,z:-2.4}}})}),g=h.game;
+  let steps=0;
+  while(g.state.removed<total&&steps<1200){h.steps(1,.05);steps++;}
+  assert.equal(g.state.removed,total);
+  assert.ok(steps*.05<60);
+  console.log('  Gantry + orbital completed the last 500 million in', (steps*.05).toFixed(2), 'seconds');
   evidence(g);
 });

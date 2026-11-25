@@ -11,7 +11,7 @@ Rocks.backyard = (() => {
     {name:'Reinforced wheelbarrow',cap:1500,cost:2500,rig:7,detail:'A bigger tray and two wheels.'},
     {name:'Trash bin on wheels',cap:9500,cost:12500,rig:'bin',detail:'Tip it into the truck. The lid is optional.'}
   ];
-  const toolIds=Rocks.models.tools.map((_,i)=>i).filter(i=>i!==5&&i!==7);
+  const toolIds=Rocks.models.tools.map((_,i)=>i).filter(i=>i!==5&&i!==7&&!Rocks.models.tools[i].tech);
   const training=[
     {name:'Gather speed',costs:[65,350,1800,9500,45000],detail:'Finish each hand-tool action sooner.'},
     {name:'Gather amount',costs:[110,620,3200,15000,75000],detail:'Fit more rocks into each grab, scoop or cycle.'},
@@ -48,7 +48,7 @@ Rocks.backyard = (() => {
       if(s.owned.includes(tier))for(let i=1;i<=carry;i++)if(!s.carryOwned.includes(i))s.carryOwned.push(i);
       if(s.tier===tier){s.tier=tier===5?4:6;s.carry=carry;}
     }
-    s.owned=s.owned.filter(i=>toolIds.includes(i));
+    s.owned=s.owned.filter(i=>toolIds.includes(i)||Rocks.models.tools[i]?.tech);
     if(!s.owned.includes(s.tier))s.owned.push(s.tier);
     if(s.carryOwned.includes(raw.carry))s.carry=raw.carry;
     s.training=training.map((v,i)=>int(raw.training?.[i],v.costs.length));
@@ -163,6 +163,13 @@ Rocks.backyard = (() => {
     for(const side of [-1,1])box(hopper.x,.99,hopper.z+side*.57,1.21,.38,.125,'bb9a60');
     box(beltEnd.x+.51,1.45,beltEnd.z,1.03,.12,.69,'9a865a');
   });
+  const speedDrive=part(()=>{
+    const x=hopper.x+.85,z=hopper.z+.39;
+    box(x,.62,z,.80,.43,.40,'435752');
+    box(x,.85,z,.68,.22,.37,'698777');
+    for(let i=0;i<4;i++)box(x-.23+i*.15,.89,z+.192,.070,.062,.014,'88e6b1');
+    rod([x+.37,.60,z],[x+.68,.74,z-.36],.043,'849285',7);
+  });
   const collector=part(()=>{
     box(intake.x,.37,intake.z,1.50,.61,1.29,'5e7465');
     box(intake.x,.74,intake.z,.92,.58,1.14,'969763');
@@ -189,9 +196,10 @@ Rocks.backyard = (() => {
     cylinder(0,.238,-.14,.094,.15,'667167','z',8);
   });
   const hose={};let hoseKey='';
-  function factoryParts(s,surface){
+  function factoryParts(s,surface,fast=false){
     if(!s.factory)return [];
     const out=[{item:belt}];
+    if(fast)out.push({item:speedDrive});
     if(s.factory>=2){
       const point=s.intakeFocus||defaultPickup;
       const y=surface.height(point.x,point.z), key=[point.x,point.z,Math.round(y*10)].join('/');
@@ -207,7 +215,7 @@ Rocks.backyard = (() => {
     }
     if(s.factory>=3)out.push({item:crusher});
     if(s.buffer) for(let i=0;i<12;i++){
-      const p=(i/12+s.phone.time*.43)%1;
+      const p=(i/12+s.phone.time*(fast?.89:.43))%1;
       out.push({item:travelling,m:transform(mix(hopper.x,output.x,p),mix(.87,1.54,p),
         mix(hopper.z,output.z,p)+(i%3-1)*.16,0,p*3,0,.73+i%4*.13)});
     }

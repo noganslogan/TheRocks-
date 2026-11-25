@@ -1,3 +1,21 @@
+# THE ROCKS. v0.6
+
+- Added the Tech tab with five futuristic upgrades and their own controls.
+- The Laser Excavator feeds its bundled high-speed conveyor from a distance
+  at up to 2.6 million rocks per second. The Matter Disintegrator credits
+  up to 2 million per second directly, even with a full carrier.
+- Gravity Sweep Drones move real field stock to a marked pad at the front of
+  the pile. The Autonomous Laser Gantry targets either the biggest patches or
+  scattered remnants at up to 6 million per second, with a pause mode.
+- Larry signs the permit for the Orbital Yard Service. Mark a section and the
+  orbital beam clears it at up to 12 million per second. Permits, installs,
+  tool unlocks, gantry mode, and orbital marks persist with older saves.
+
+The automated release suite covers the purchases, touch-triggered mining,
+instant credits, drone accounting, cleanup targeting and a marked pass
+surviving a reload. On the simulated 500-million-rock benchmark, an active
+gantry and one orbital pass finished the yard in 30 seconds.
+
 # THE ROCKS. v0.5
 
 - Added automatic hopper intake for carried loads and held-tool work beside

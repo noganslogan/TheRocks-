@@ -19,7 +19,10 @@ Rocks.models = (() => {
     {n:'Mini skid steer', cost:100000, cap:85000, hit:42500, mode:'skid', cycle:.63, impact:.32, power:4, boulder:true, eye:1.85, width:1.52, reach:1.73, speed:5.3, turn:2.55, desc:'Curl the bucket into the pile. Turns in place.'},
     {n:'Mini excavator', cost:250000, cap:400000, hit:200000, mode:'excavator', cycle:1.04, impact:.62, power:7, boulder:true, eye:2.02, width:1.6, reach:2.62, speed:3.6, turn:1.9, desc:'Reach into the pile and pull back a trench with the articulated arm.'},
     {n:'Industrial loader', cost:500000, cap:2200000, hit:1100000, mode:'loader', cycle:.86, impact:.45, power:9, boulder:true, eye:2.55, width:2.11, reach:2.30, speed:6.2, turn:1.55, desc:'Load a high-volume bucket and lift it toward the truck bed.'},
-    {n:'Bulldozer', cost:1000000, cap:12000000, hit:1700000, mode:'dozer', cycle:.18, impact:.07, power:12, boulder:true, eye:2.15, width:2.10, reach:2.28, speed:5.2, turn:1.8, desc:'Lower the blade, drive forward into gravel, and push the load to the truck.'}
+    {n:'Bulldozer', cost:1000000, cap:12000000, hit:1700000, mode:'dozer', cycle:.18, impact:.07, power:12, boulder:true, eye:2.15, width:2.10, reach:2.28, speed:5.2, turn:1.8, desc:'Lower the blade, drive forward into gravel, and push the load to the truck.'},
+    {n:'Laser Excavator',cost:25_000_000,cap:0,hit:0,tech:'laser',hold:true,desc:'Cut slabs into the hopper. Includes the high-speed conveyor.'},
+    {n:'Matter Disintegrator',cost:60_000_000,cap:0,hit:0,tech:'matter',hold:true,desc:'Vaporize rocks and earn credits immediately.'},
+    {n:'Orbital Yard Service',cost:150_000_000,cap:0,hit:0,tech:'orbital',desc:'Get Larry’s permit and mark a section for the orbital beam.'}
   ];
   const skin='c99573', lightSkin='d5a27e', sleeve='64715a';
   const steel='8a989b', edge='c0cbca', dark='343d3e', rubber='252c2a', gold='d3a44b';
@@ -310,7 +313,7 @@ Rocks.models = (() => {
       tri([width/2,.42,0],[width/2,y,z],[width/2,Y,Z],dark);
     }
   }
-  for(let tier=11;tier<tools.length;tier++){
+  for(let tier=11;tier<tools.length&&tools[tier].eye;tier++){
     const t=tools[tier], mode=t.mode, tracked=mode==='dozer'||mode==='excavator', cart=mode==='cart';
     const large=mode==='loader'||mode==='dozer', w=t.width, yellow=mode==='skid'?'bb6646':mode==='excavator'?'b28246':mode==='cart'?'688375':gold;
     const half=cart?.56:large?.88:.65, tireRadius=cart?.29:large?.47:.33;

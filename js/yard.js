@@ -235,6 +235,22 @@ Rocks.yard = (() => {
       }
       return taken;
     }
+    function moveStock(from,to,limit){
+      const s=getState();
+      const n=Math.min(limit,s.depleted[to.id],from.id===undefined?s.rubble[from.rubble]||0:available(from.id));
+      if(n<=0||from.id===to.id)return 0;
+      if(from.id===undefined){
+        s.rubble[from.rubble]-=n;
+        if(!s.rubble[from.rubble])delete s.rubble[from.rubble];
+        geologyDirty=true;
+      }else{
+        s.depleted[from.id]+=n;
+        mark(from.id);
+      }
+      s.depleted[to.id]-=n;
+      mark(to.id);
+      return n;
+    }
     function puff(x,z,n,direction=[0,0]){
       const amount=Math.min(R.gl?24:8,Math.max(3,Math.ceil(Math.sqrt(n)*1.7)));
       for(let i=0;i<amount;i++){
@@ -289,7 +305,7 @@ Rocks.yard = (() => {
       return list;
     }
     invalidate();
-    return {height,nearest,available,excavate,puff,step,parts,exposed,mark,invalidate,geology,changed:()=>{geologyDirty=true;}};
+    return {height,nearest,available,excavate,moveStock,puff,step,parts,exposed,mark,invalidate,geology,changed:()=>{geologyDirty=true;}};
   }
   return {TOTAL,pile,truck,shed,delivery,chair,cells,index,spread,createSurface};
 })();

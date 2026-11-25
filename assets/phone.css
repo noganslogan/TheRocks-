@@ -46,3 +46,6 @@
 .crew-jobs{display:flex;gap:5px;flex-wrap:wrap}
 .crew-jobs button,.crew-upgrade button{padding:4px 8px;min-height:32px;font-size:11px}
 .crew-upgrade{display:flex;align-items:center;justify-content:space-between;gap:7px;border-bottom:1px solid #fff2;padding:6px 0;font-size:12px}
+
+#techStatus{margin-top:5px;font-weight:800;color:#f6c594}
+#gantryBtn{pointer-events:auto;min-height:40px;padding:0 8px;max-width:134px;font-size:9px;font-weight:850;line-height:1.15;background:#343650;color:#e1def4}

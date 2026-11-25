@@ -1,4 +1,4 @@
-THE ROCKS. v0.5
+THE ROCKS. v0.6
 
 Your wife volunteered you to remove one billion rocks from Larry's yard. Pick
 them up, haul them to the truck, and spend the rock credits in the shed. The
@@ -35,6 +35,17 @@ Factory, you can also feed the hopper beside the belt. Carried loads enter as so
 within range to send new rubble onto the belt. The powered collector works
 a local patch. Aim at gravel and press C or tap Set intake to move its pickup
 head within hose reach. The crusher processes rubble and speeds up the line.
+
+
+FUTURISTIC EQUIPMENT
+
+Open the Tech tab at the shed. Aim and hold the Laser Excavator to feed the
+bundled high-speed conveyor, or use the Matter Disintegrator for immediate
+credits. Gravity Sweep Drones move existing stock to the sweep pad on the
+front side of the pile. The Gantry button (G) cycles Biggest pile, Cleanup,
+and Paused. With the Orbital Yard Service equipped, use Ask Larry while
+standing near Larry. Then aim at the pile and use Mark area to start a pass.
+Your marked pass runs in the background and can resume after a reload.
 
 CLOUDFLARE
 
